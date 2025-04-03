@@ -86,7 +86,7 @@ async def test_tech_tree_ai_initialization(MockTavily, MockGetLLM):
 
     assert ai.llm == mock_llm
     assert ai.search_tool == mock_tavily_instance
-    assert ai.graph is None # Graph is not built in this simplified setup
+    # Removed assertion for ai.graph as it's not an attribute of TechTreeAI
     MockGetLLM.assert_called_once()
     MockTavily.assert_called_once_with(max_results=3)
 

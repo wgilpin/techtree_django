@@ -12,9 +12,9 @@ from django.utils import timezone
 from core.models import (
     Syllabus, Module, Lesson, LessonContent, UserProgress, ConversationHistory
 )
+from .templatetags.markdown_extras import markdownify # Import for testing view output
 # Assuming services are needed for view tests, adjust if not
 # from . import services # Not directly used in view tests, mocks are used
-
 User = get_user_model()
 
 
@@ -187,7 +187,8 @@ class LessonViewsTestCase(TestCase):
         self.assertEqual(response.status_code, 200)
         response_json = response.json()
         self.assertEqual(response_json['status'], 'success')
-        self.assertEqual(response_json['assistant_message'], mock_service_return['assistant_message'])
+        # Compare against the markdownified version, as the view does
+        self.assertEqual(response_json['assistant_message'], markdownify(mock_service_return['assistant_message']))
 
         # Assert against the state *as it exists in the DB AFTER the mocked service call*
         # because the view calls refresh_from_db()
@@ -226,7 +227,8 @@ class LessonViewsTestCase(TestCase):
         self.assertEqual(response.status_code, 200)
         response_json = response.json()
         self.assertEqual(response_json['status'], 'success')
-        self.assertEqual(response_json['assistant_message'], mock_service_return['assistant_message'])
+        # Compare against the markdownified version
+        self.assertEqual(response_json['assistant_message'], markdownify(mock_service_return['assistant_message']))
         self.assertEqual(response_json['updated_state'], updated_state_in_db) # Check against saved state
 
         mock_get_state.assert_called_once_with(
@@ -262,7 +264,8 @@ class LessonViewsTestCase(TestCase):
         self.assertEqual(response.status_code, 200)
         response_json = response.json()
         self.assertEqual(response_json['status'], 'success')
-        self.assertEqual(response_json['assistant_message'], mock_service_return['assistant_message'])
+        # Compare against the markdownified version
+        self.assertEqual(response_json['assistant_message'], markdownify(mock_service_return['assistant_message']))
         self.assertEqual(response_json['updated_state'], updated_state_in_db) # Check against saved state
 
         mock_get_state.assert_called_once_with(
