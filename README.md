@@ -104,6 +104,24 @@ The Tech Tree application provides an adaptive learning platform with the follow
     *   Configure `DATABASE_URL` if you are using a database other than the default SQLite (e.g., PostgreSQL, MySQL).
     *   Set `DEBUG=False` in a production environment.
 
+
+
+    **For local development: Using Google Application Default Credentials (ADC)**
+
+    For Google Cloud services like Gemini, using Application Default Credentials (ADC) is often the recommended approach for authentication, especially during local development, as it avoids needing to manage API keys directly in `.env` files.
+
+    To set up ADC:
+
+    1.  **Install the Google Cloud CLI (`gcloud`):** Follow the instructions at [https://cloud.google.com/sdk/docs/install](https://cloud.google.com/sdk/docs/install).
+    2.  **Log in to ADC:** Run the following command in your terminal and follow the browser prompts to authenticate with your Google account:
+        ```bash
+        gcloud auth application-default login
+        ```
+
+    Once ADC is configured, Google client libraries (including the one used by `langchain-google-genai`) will automatically detect and use these credentials. You might still need the `GEMINI_API_KEY` in your `.env` if other parts of the application rely on it directly via Django settings, but for direct Google library calls, ADC should take precedence.
+
+    See the official guide for more details: [Set up Application Default Credentials for local development](https://cloud.google.com/docs/authentication/set-up-adc-local-dev-environment)
+
 5.  **Apply database migrations:**
 
     ```bash

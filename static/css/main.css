@@ -1084,3 +1084,76 @@ label {
     border-top: 1px solid var(--border-color);
     margin: 2em 0;
 }
+
+
+/* Chat Bubble Styles */
+#chat-history {
+    background-color: #f0f0f0; /* Light gray background for the chat area */
+    padding: 15px;
+}
+
+.message-container {
+    display: flex;
+    margin-bottom: 10px;
+    align-items: flex-end; /* Align items to the bottom */
+}
+
+.user-message {
+    justify-content: flex-end; /* Align user messages to the right */
+}
+
+.assistant-message {
+    justify-content: flex-start; /* Align assistant messages to the left */
+}
+
+.assistant-icon {
+    font-size: 1.5em; /* Adjust icon size as needed */
+    color: #555; /* Icon color */
+    margin-right: 8px;
+    margin-bottom: 5px; /* Align icon slightly lower */
+}
+
+.chat-bubble {
+    max-width: 75%; /* Prevent bubbles from being too wide */
+    padding: 10px 15px;
+    border-radius: 18px; /* Rounded corners for bubble effect */
+    word-wrap: break-word; /* Ensure long words break */
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.user-message .chat-bubble {
+    background-color: #ffffff; /* White background for user */
+    border-bottom-right-radius: 5px; /* Slightly flatten corner near edge */
+    color: #333;
+}
+
+.assistant-message .chat-bubble {
+    background-color: #e0f7fa; /* Nice light blue for assistant */
+    border-bottom-left-radius: 5px; /* Slightly flatten corner near edge */
+    color: #333;
+}
+
+/* Ensure markdown content within bubbles doesn't break layout */
+.chat-bubble p:last-child {
+    margin-bottom: 0;
+}
+
+.chat-bubble ul,
+.chat-bubble ol {
+    padding-left: 20px;
+    margin-top: 5px;
+    margin-bottom: 5px;
+}
+
+.chat-bubble pre {
+    margin: 8px 0;
+    padding: 8px;
+    background-color: rgba(0,0,0,0.05);
+    border-radius: 4px;
+    font-size: 0.9em;
+    overflow-x: auto;
+}
+
+.chat-bubble code {
+    font-size: 0.9em;
+}

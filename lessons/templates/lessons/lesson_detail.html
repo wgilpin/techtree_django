@@ -50,12 +50,17 @@
                     <!-- Chat messages -->
                     {% if conversation_history %}
                         {% for message in conversation_history %}
-                            <div class="mb-2 p-2 rounded {% if message.sender == 'user' %}bg-light text-dark{% else %}bg-primary text-white{% endif %}">
-                                <strong>{{ message.sender|capfirst }}:</strong> {{ message.content|linebreaksbr }}
+                        <div class="message-container {% if message.role == 'user' %}user-message{% else %}assistant-message{% endif %}">
+                            {% if message.role != 'user' %}
+                                <i class="fas fa-robot assistant-icon"></i> {# Assuming Font Awesome is available #}
+                            {% endif %}
+                            <div class="chat-bubble">
+                                {{ message.content|markdownify|safe }} {# Ensure markdown HTML is rendered #}
                             </div>
+                        </div>
                         {% endfor %}
                     {% else %}
-                        <p>No conversation history yet.</p>
+                        <p class="text-center text-muted">No conversation history yet.</p> {# Keep placeholder #}
                     {% endif %}
                 </div>
                 <form id="chat-form">
@@ -92,18 +97,24 @@
 {% block extra_js %}
 <script>
 // Function to render KaTeX math
-function renderKatex() {
+// Function to render KaTeX math within a specific element or the whole body
+// Function to render KaTeX math within a specific element or the whole body
+function renderKatex(targetElement = document.body) { // Default to document.body
     if (typeof renderMathInElement === 'function') {
-        renderMathInElement(document.getElementById('lesson-content-area'), {
-            delimiters: [
-                {left: '$$', right: '$$', display: true},
-                {left: '\\[', right: '\\]', display: true},
-                {left: '$', right: '$', display: false},
-                {left: '\\(', right: '\\)', display: false}
-            ],
+        // Use the standard delimiters KaTeX auto-render expects,
+        // Now that arithmatex is removed, only look for original $ and $$ delimiters
+        renderMathInElement(targetElement, {
+             delimiters: [
+                 {left: '$$', right: '$$', display: true},   // Keep as fallback
+                 {left: '\\[', right: '\\]', display: true}, // Primary display math delimiter from arithmatex generic=True
+                 {left: '$', right: '$', display: false},    // Keep as fallback
+                 {left: '\\(', right: '\\)', display: false} // Primary inline math delimiter from arithmatex generic=True
+             ],
             throwOnError: false
         });
-        console.log("KaTeX rendering triggered for lesson content.");
+        // Adjust log message based on target
+        const targetDesc = targetElement === document.body ? 'document body' : targetElement.id || targetElement.tagName;
+        console.log(`KaTeX auto-rendering triggered for ${targetDesc}.`);
     } else {
         console.warn("KaTeX renderMathInElement function not found.");
     }
@@ -153,6 +164,14 @@ document.addEventListener('DOMContentLoaded', function() {
         activeTaskArea.appendChild(taskDiv);
         // Adjust placeholder text based on context
         userMessageInput.placeholder = `Enter your answer for the ${taskType.toLowerCase()}...`;
+
+
+    // --- Scroll Chat History to Bottom on Load ---
+    if (chatHistory.children.length > 1 || (chatHistory.children.length === 1 && !chatHistory.querySelector('p.text-center.text-muted'))) {
+        // Scroll down if there are messages, excluding the 'No history' placeholder
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+        console.log("Scrolled chat history to bottom on initial load.");
+    }
     }
 
     // --- Initial Task Display ---
@@ -184,7 +203,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (data.status === 'success' && data.html_content) {
                 console.log("Content received successfully.");
                 lessonContentArea.innerHTML = data.html_content; // Inject the HTML
-                renderKatex(); // Trigger KaTeX rendering *after* content injection
+                renderKatex(lessonContentArea); // Target KaTeX rendering to the specific area
             } else {
                 console.error("Failed to load content:", data.error || "Unknown error");
                 lessonContentArea.innerHTML = `<p class="text-danger">Error loading lesson content: ${data.error || 'Please try refreshing.'}</p>`;
@@ -196,25 +215,35 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     } else {
          // If content was loaded initially, render KaTeX immediately
-         renderKatex();
+         renderKatex(lessonContentArea); // Target KaTeX rendering to the specific area
     }
 
-    // Function to append a message to the chat history
-    function appendMessage(sender, message) {
-        const messageDiv = document.createElement('div');
-        messageDiv.classList.add('mb-2', 'p-2', 'rounded');
-        if (sender === 'user') {
-            messageDiv.classList.add('bg-light', 'text-dark');
-        } else {
-            messageDiv.classList.add('bg-primary', 'text-white');
-        }
-        // Use textContent for security against XSS unless HTML is explicitly needed and sanitized
-        messageDiv.innerHTML = `<strong>${sender.charAt(0).toUpperCase() + sender.slice(1)}:</strong> `; 
-        // Create a text node for the message content to prevent potential XSS if message contains HTML
-        const messageTextNode = document.createTextNode(message);
-        messageDiv.appendChild(messageTextNode);
+    // Function to append a message to the chat history with bubble styling
+    function appendMessage(sender, messageContent) {
+        const messageContainer = document.createElement('div');
+        messageContainer.classList.add('message-container');
 
-        chatHistory.appendChild(messageDiv);
+        const bubbleDiv = document.createElement('div');
+        bubbleDiv.classList.add('chat-bubble');
+        // Assistant messages might contain HTML from markdown, user messages are treated as text for now
+        // Server should sanitize assistant messages.
+        bubbleDiv.innerHTML = messageContent; // Assumes messageContent is safe HTML or plain text
+
+        if (sender === 'user') {
+            messageContainer.classList.add('user-message');
+        } else { // Assuming 'assistant' or 'system'
+            messageContainer.classList.add('assistant-message');
+            // Add the robot icon for assistant messages
+            const icon = document.createElement('i');
+            icon.className = 'fas fa-robot assistant-icon'; // Assuming Font Awesome
+            messageContainer.appendChild(icon);
+        }
+
+        messageContainer.appendChild(bubbleDiv);
+        chatHistory.appendChild(messageContainer);
+
+        // Render KaTeX within the entire chat history after adding the new bubble
+        renderKatex(chatHistory);
 
         // Scroll to the bottom
         chatHistory.scrollTop = chatHistory.scrollHeight;

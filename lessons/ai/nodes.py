@@ -93,6 +93,14 @@ class AssessmentQuestion(TypedDict, total=False):
     confidence_check: Optional[bool]  # Default false
 
 
+import os # Add import
+from django.conf import settings
+from langchain_google_genai import ChatGoogleGenerativeAI
+import logging
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
 # --- LLM Initialization Helper ---
 def _get_llm(temperature: float = 0.2) -> Optional[ChatGoogleGenerativeAI]:
     """Initializes and returns the LangChain LLM model."""
@@ -101,12 +109,17 @@ def _get_llm(temperature: float = 0.2) -> Optional[ChatGoogleGenerativeAI]:
     if not api_key or not model_name:
         logger.error("LLM API key or model name not configured in settings.")
         return None
+    # Explicitly set the environment variable for the library to find
+    os.environ['GOOGLE_API_KEY'] = api_key
     try:
-        return ChatGoogleGenerativeAI(
+        # logger.info(f"Attempting to initialize LLM. Model: {model_name}, API Key Loaded: {bool(api_key)}") # Logging before init might still error
+        llm = ChatGoogleGenerativeAI(
             model=model_name,
             temperature=temperature,
             convert_system_message_to_human=True,
         )
+        logger.info(f"Successfully initialized LLM. Model: {model_name}") # Log after successful init
+        return llm
     except Exception as e:
         logger.error(
             "Failed to initialize ChatGoogleGenerativeAI: %s", e, exc_info=True

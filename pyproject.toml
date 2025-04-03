@@ -15,6 +15,7 @@ dependencies = [
     "markdown>=3.7",
     "pydantic>=2.11.1",
     "pyjwt>=2.10.1",
+    "pymdown-extensions>=10.14.3",
     "python-dotenv>=1.1.0",
     "python-jose[cryptography]>=3.4.0",
     "requests>=2.32.3",

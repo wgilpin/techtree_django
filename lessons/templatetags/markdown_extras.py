@@ -24,7 +24,14 @@ def markdownify(value: str) -> str:
             'markdown.extensions.fenced_code', # Code blocks ```like this```
             'markdown.extensions.tables',      # Markdown tables
             'markdown.extensions.nl2br',       # Convert newlines to <br>
-            # 'markdown.extensions.extra',     # Temporarily disable 'extra' to check for interference
-        ]
+            'pymdownx.arithmatex',             # Add Arithmatex back
+            # 'markdown.extensions.extra',     # Keep disabled
+        ],
+        extension_configs={
+            'pymdownx.arithmatex': {
+                'generic': True  # Use generic mode for KaTeX/MathJax compatibility
+            }
+        }
+        # Removed extension_configs for arithmatex to test default behavior
     )
     return mark_safe(html)

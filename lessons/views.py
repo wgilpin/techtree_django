@@ -14,7 +14,7 @@ from core.models import Lesson, Syllabus, Module, UserProgress, LessonContent, C
 from . import services # Import the services module
 import markdown # For async view
 from django.utils.safestring import mark_safe # For async view
-
+from .templatetags.markdown_extras import markdownify # Import markdownify
 if TYPE_CHECKING:
     from django.contrib.auth.models import User # type: ignore[attr-defined]
 
@@ -188,7 +188,8 @@ def handle_lesson_interaction(
                 progress.refresh_from_db()
                 response_data = {
                     'status': 'success',
-                    'assistant_message': service_response.get('assistant_message'),
+                    # Apply markdownify to the assistant message before sending
+                    'assistant_message': markdownify(service_response.get('assistant_message', '')) if service_response.get('assistant_message') else '',
                     # Send back the updated state from the refreshed progress object
                     'updated_state': progress.lesson_state_json,
                 }
