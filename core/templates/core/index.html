@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block title %}Welcome - TechTree{% endblock %}
+
+{% block content %}
+<div class="auth-container"> {# Reuse auth container for centering #}
+    <div class="auth-card"> {# Reuse auth card for styling #}
+        <div class="auth-header">
+            <div class="auth-logo-text">TechTree</div>
+            <h1>Welcome to TechTree</h1>
+            <p>Your personalized learning journey starts here.</p>
+        </div>
+        <div class="text-center mt-3">
+             {# Link to login using the standard Django auth URL name #}
+            <a href="{% url 'login' %}" class="primary-button">Login</a>
+             {# Link to register using the name defined in core.urls (no namespace now) #}
+            <a href="{% url 'register' %}" class="primary-button" style="margin-left: 10px;">Register</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

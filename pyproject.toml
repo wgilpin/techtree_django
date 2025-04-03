@@ -1,0 +1,68 @@
+[project]
+name = "techtree-django-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "beautifulsoup4>=4.13.3",
+    "django>=5.2",
+    "django-environ>=0.12.0",
+    "google-generativeai>=0.8.4",
+    "langchain-community>=0.3.20",
+    "langchain-google-genai>=2.0.10",
+    "langgraph>=0.3.22",
+    "markdown>=3.7",
+    "pydantic>=2.11.1",
+    "pyjwt>=2.10.1",
+    "python-dotenv>=1.1.0",
+    "python-jose[cryptography]>=3.4.0",
+    "requests>=2.32.3",
+    "tavily-python>=0.5.3",
+    "types-markdown>=3.7.0.20250322",
+    "types-requests>=2.32.0.20250328",
+]
+
+[dependency-groups]
+dev = [
+    "django-stubs[compatible-mypy]>=5.1.3",
+    "mypy>=1.15.0",
+    "pytest-asyncio>=0.26.0",
+    "pytest-django>=4.11.0",
+]
+
+
+[tool.mypy]
+ignore_missing_imports = true
+plugins = ["mypy_django_plugin.main"]
+
+# If you want to be stricter later, remove the global ignore
+# and add specific ignores like this:
+# [[tool.mypy.overrides]]
+# module = [
+#     "environ.*",
+# ]
+# ignore_missing_imports = true
+
+
+[tool.django-stubs]
+django_settings_module = "techtree_django.settings"
+
+
+
+[tool.pylint.'MESSAGES CONTROL']
+disable = [
+    "logging-fstring-interpolation",
+    "broad-exception-caught",
+    # Add other Pylint codes to disable here if needed
+]
+
+
+[tool.pylint.'FORMAT']
+max-line-length = 120
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "techtree_django.settings"
+python_files = "tests.py test_*.py *_tests.py" # Standard Django test discovery patterns
+
+

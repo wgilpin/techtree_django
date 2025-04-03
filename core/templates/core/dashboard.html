@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% load static %} {# Load static just in case, though base.html already does #}
+
+{% block title %}Dashboard - TechTree{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <h1>Welcome, {{ user.username }}!</h1>
+
+    <div class="dashboard-section">
+        <div class="section-header">
+            <h2>Your Learning Journey</h2>
+            {# Keep button, but functionality might need adjustment later #}
+            <button class="primary-button" onclick="showTopicInput()">Start New Topic</button>
+        </div>
+
+        {# Assume 'courses' context variable is passed from the view #}
+        {% if courses %}
+            <div class="courses-grid">
+                {% for course in courses %}
+                    <div class="course-card">
+                        <div class="course-header">
+                            {# Assuming course object has topic attribute #}
+                            <h3>{{ course.topic }}</h3>
+                            {# Assuming course object has level attribute #}
+                            <span class="level-badge">{{ course.level }}</span>
+                        </div>
+                        <div class="course-progress">
+                            <div class="progress-bar">
+                                {# Assuming course object has progress_percentage attribute #}
+                                <div class="progress-fill" style="width: {{ course.progress_percentage|floatformat:0 }}%;"></div>
+                            </div>
+                            <div class="progress-text">
+                                {{ course.progress_percentage|floatformat:0 }}% Complete
+                            </div>
+                        </div>
+                        <div class="course-stats">
+                            <div class="stat">
+                                {# Assuming course object has completed_lessons attribute #}
+                                <span class="stat-value">{{ course.completed_lessons }}</span>
+                                <span class="stat-label">Completed</span>
+                            </div>
+                            <div class="stat">
+                                {# Assuming course object has total_lessons attribute #}
+                                <span class="stat-value">{{ course.total_lessons }}</span>
+                                <span class="stat-label">Total Lessons</span>
+                            </div>
+                        </div>
+                        {# Placeholder URL name - needs definition in urls.py and view logic #}
+                        {# Pass primary key or relevant identifiers #}
+                        <a href="#" class="course-button">Continue Learning</a>
+                        {# Example if using syllabus ID (no namespace):
+                           <a href="{% url 'syllabus_detail' syllabus_id=course.syllabus_id %}" class="course-button">Continue Learning</a>
+                        #}
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="empty-state" style="text-align: center; padding: 2rem;">
+                <div class="empty-icon" style="font-size: 3rem; margin-bottom: 1rem;">📚</div>
+                <h3>No courses in progress</h3>
+                <p>Start your learning journey by selecting a topic below.</p>
+
+                <div class="topic-suggestions" style="margin-top: 1.5rem;">
+                    {# Link to the assessment page view #}
+                    <a href="{% url 'onboarding_assessment_page' topic='Python Programming' %}" class="primary-button" style="margin: 5px;">Python Programming</a>
+                    <a href="{% url 'onboarding_assessment_page' topic='Machine Learning' %}" class="primary-button" style="margin: 5px;">Machine Learning</a>
+                    <a href="{% url 'onboarding_assessment_page' topic='Web Development' %}" class="primary-button" style="margin: 5px;">Web Development</a>
+                    <a href="{% url 'onboarding_assessment_page' topic='Quantum Computing' %}" class="primary-button" style="margin: 5px;">Quantum Computing</a>
+                </div>
+                 <div class="custom-topic" style="margin-top: 1.5rem;">
+                     {# Form to navigate to assessment page via JS #}
+                    <form id="custom-topic-form" style="display: flex; justify-content: center; gap: 10px;">
+                         {# No CSRF needed for GET navigation #}
+                        <input type="text" id="custom-topic-input" name="topic" placeholder="Or enter your own topic..." required style="max-width: 300px;">
+                        <button type="submit" class="primary-button">Start</button>
+                    </form>
+                </div>
+            </div>
+        {% endif %}
+    </div>
+
+    <div class="dashboard-section">
+        <div class="section-header">
+            <h2>Learning Stats</h2>
+        </div>
+
+        {# Simplified stats - ideally calculated in the view #}
+        <div class="stats-container" style="display: flex; justify-content: space-around; text-align: center;">
+            <div class="stat-card">
+                <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">🏆</div>
+                {# Use Django's length filter #}
+                <div class="stat-value">{{ courses|length }}</div>
+                <div class="stat-label">Courses in Progress</div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">✅</div>
+                {# Placeholder - Calculate total_completed in the view #}
+                <div class="stat-value">{{ total_completed_lessons|default:"0" }}</div>
+                <div class="stat-label">Lessons Completed</div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">⏱️</div>
+                 {# Placeholder - Calculate average_progress in the view #}
+                <div class="stat-value">{{ average_progress|default:"0" }}%</div>
+                <div class="stat-label">Average Progress</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{# Keep the JS function, ensure elements exist or are handled #}
+<script>
+    // Function called by the "Start New Topic" button (if uncommented/used)
+    function showTopicInput() {
+        const sidebar = document.getElementById('sidebar');
+        const topicInput = document.getElementById('topic-input'); // This element is commented out in base.html
+
+        if (sidebar) {
+             sidebar.classList.add('open');
+        }
+        // If topic input is needed here, it should be added to this template
+        // or the logic in base.html uncommented and potentially moved.
+        // For now, just opening sidebar.
+        // if (topicInput) {
+        //     topicInput.style.display = 'block';
+        //     const inputField = topicInput.querySelector('input');
+        //     if (inputField) {
+        //         inputField.focus();
+        //     }
+        // }
+        alert("Start New Topic functionality needs to be implemented."); // Placeholder
+    }
+
+    // Attach listener for the custom topic form after DOM is loaded
+    document.addEventListener('DOMContentLoaded', function() {
+        const customTopicForm = document.getElementById('custom-topic-form');
+        if (customTopicForm) {
+            customTopicForm.addEventListener('submit', function(e) {
+                e.preventDefault(); // Prevent default form submission
+                const topicInput = document.getElementById('custom-topic-input');
+                const topic = topicInput.value.trim();
+                if (topic) {
+                    // Construct the URL dynamically.
+                    // Assumes the assessment URL structure is /onboarding/assess/<topic>/
+                    // Encode the topic properly for the URL.
+                    const assessmentUrl = `/onboarding/assess/${encodeURIComponent(topic)}/`;
+                    window.location.href = assessmentUrl; // Navigate to the assessment page
+                }
+            });
+        }
+    });
+</script>
+{% endblock %}

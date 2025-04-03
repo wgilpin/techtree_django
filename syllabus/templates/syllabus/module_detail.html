@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Module: {{ module.title }} - TechTree{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'dashboard' %}">Dashboard</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'syllabus:detail' syllabus_id=syllabus_id %}">Syllabus</a></li>
+            <li class="breadcrumb-item active" aria-current="page">Module {{ module.module_index|add:1 }}</li>
+        </ol>
+    </nav>
+
+    <h1>Module {{ module.module_index|add:1 }}: {{ module.title }}</h1>
+    {% if module.summary %}
+        <p class="lead">{{ module.summary }}</p>
+    {% endif %}
+
+    <h2>Lessons</h2>
+    {% if module.lessons %}
+        <div class="list-group">
+            {% for lesson in module.lessons %}
+                <a href="{% url 'syllabus:lesson_detail' syllabus_id=syllabus_id module_index=module.module_index lesson_index=lesson.lesson_index %}" class="list-group-item list-group-item-action">
+                    <div class="d-flex w-100 justify-content-between">
+                        <h5 class="mb-1">Lesson {{ forloop.counter }}: {{ lesson.title }}</h5>
+                        {% if lesson.duration %}<small>{{ lesson.duration }}</small>{% endif %}
+                    </div>
+                    {% if lesson.summary %}<p class="mb-1">{{ lesson.summary }}</p>{% endif %}
+                </a>
+            {% endfor %}
+        </div>
+    {% else %}
+        <p>No lessons found in this module.</p>
+    {% endif %}
+
+    <div class="mt-4">
+        <a href="{% url 'syllabus:detail' syllabus_id=syllabus_id %}" class="btn btn-secondary">&laquo; Back to Syllabus</a>
+    </div>
+</div>
+{% endblock %}

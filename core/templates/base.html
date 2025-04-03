@@ -1,0 +1,139 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}TechTree{% endblock %}</title>
+    {# Use Django's static tag #}
+    <link rel="stylesheet" href="{% static 'css/main.css' %}">
+    {# KaTeX CSS for math rendering (v0.16.10) - Integrity check removed #}
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.css">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <div class="app-container">
+        <header class="header">
+            <div class="header-content">
+                <div class="logo-container">
+                    {# Assuming an 'index' URL name will be defined #}
+                    <a href="{% url 'index' %}" class="logo-text">
+                        TechTree
+                    </a>
+                </div>
+                <div class="nav-container">
+                    <nav class="main-nav">
+                        {# Use Django's user authentication check #}
+                        {% if user.is_authenticated %}
+                            {# Assuming a 'dashboard' URL name will be defined #}
+                            <a href="{% url 'dashboard' %}" class="nav-link">Dashboard</a>
+                            <a href="#" class="nav-link" id="toggle-sidebar">Menu</a>
+                            <div class="user-menu">
+                                {# Use Django's user object #}
+                                <span>{{ user.username }}</span>
+                                {# Use Django's standard 'logout' URL name #}
+                                <a href="{% url 'logout' %}" class="nav-link">Logout</a>
+                            </div>
+                        {% else %}
+                            {# Use Django's standard 'login' URL name #}
+                            <a href="{% url 'login' %}" class="nav-link">Login</a>
+                            {# Assuming a 'register' URL name will be defined #}
+                            <a href="{% url 'register' %}" class="nav-link">Register</a>
+                        {% endif %}
+                    </nav>
+                </div>
+            </div>
+        </header>
+
+        <main class="content">
+            {% if user.is_authenticated %}
+                <aside class="sidebar" id="sidebar">
+                    <div class="sidebar-content">
+                        <h3>Navigation</h3>
+                        <ul class="sidebar-nav">
+                            <li><a href="{% url 'dashboard' %}">Dashboard</a></li>
+                            {# Commenting out dynamic form for now #}
+                            {# <li><a href="#" onclick="showTopicInput()">Start New Topic</a></li> #}
+                        </ul>
+
+                        {# Commenting out dynamic form for now
+                        <div id="topic-input" style="display: none;">
+                            <form action="{% url 'index' %}" method="post">
+                                {% csrf_token %} {# Add CSRF token for Django forms #}
+                                <input type="text" name="topic" placeholder="Enter a topic" required>
+                                <button type="submit">Start</button>
+                            </form>
+                        </div>
+                        #}
+
+                        <h3>In Progress</h3>
+                        <ul class="sidebar-courses">
+                            <!-- This would be populated dynamically -->
+                        </ul>
+                    </div>
+                </aside>
+            {% endif %}
+
+            <div class="page-content">
+                {# Use Django's messages framework #}
+                {% if messages %}
+                    <div class="flash-messages">
+                        {% for message in messages %}
+                            <div class="flash-message {% if message.tags %} {{ message.tags }}{% endif %}">{{ message }}</div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+
+                {% block content %}{% endblock %}
+            </div>
+        </main>
+
+        <footer class="footer">
+            <div class="footer-content">
+                <p>&copy; {% now "Y" %} TechTree. All rights reserved.</p> {# Use Django's now tag #}
+            </div>
+        </footer>
+    </div>
+
+    {# Keep existing JavaScript, assuming it doesn't rely on Flask specifics removed #}
+    <script>
+        // Toggle sidebar
+        const toggleButton = document.getElementById('toggle-sidebar');
+        if (toggleButton) {
+            toggleButton.addEventListener('click', function(e) {
+                e.preventDefault();
+                const sidebar = document.getElementById('sidebar');
+                if (sidebar) {
+                    sidebar.classList.toggle('open');
+                }
+            });
+        }
+
+        // Show topic input (function kept, but trigger commented out above)
+        function showTopicInput() {
+            const topicInput = document.getElementById('topic-input');
+            if (topicInput) {
+                topicInput.style.display = 'block';
+            }
+        }
+    </script>
+
+    {# KaTeX JS for math rendering (v0.16.10) - Integrity check removed #}
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.js"></script>
+    {# KaTeX auto-render extension (v0.16.10) - Integrity check removed #}
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/contrib/auto-render.min.js"
+        onload="renderMathInElement(document.body, {
+          // customised options
+          delimiters: [
+              {left: '$$', right: '$$', display: true}, // Display math
+              {left: '\\[', right: '\\]', display: true}, // Display math
+              {left: '$', right: '$', display: false},  // Inline math
+              {left: '\\(', right: '\\)', display: false} // Inline math
+          ],
+          // rendering options
+          throwOnError : false // Don't halt rendering on parse errors
+        });"></script>
+
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

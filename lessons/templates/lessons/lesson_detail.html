@@ -1,0 +1,331 @@
+{% extends "base.html" %}
+{% load static %}
+{% load markdown_extras %} {# Load the custom template tags #}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'dashboard' %}">Dashboard</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'syllabus:detail' syllabus.pk %}">Syllabus: {{ syllabus.topic }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'syllabus:module_detail' syllabus.pk module.module_index %}">Module {{ module.module_index }}: {{ module.title }}</a></li>
+            <li class="breadcrumb-item active" aria-current="page">Lesson {{ lesson.lesson_index }}: {{ lesson.title }}</li>
+        </ol>
+    </nav>
+
+    <h1 class="mb-3">{{ lesson.title }}</h1>
+    <p class="text-muted">Module {{ module.module_index }} | Lesson {{ lesson.lesson_index }}</p>
+    {% if lesson.summary %}
+        <p class="lead">{{ lesson.summary }}</p>
+    {% endif %}
+
+    <hr>
+
+    <div class="row">
+        <div class="col-md-8">
+            <h2>Lesson Content</h2>
+            <div id="lesson-content-area" class="mb-4 p-3 border rounded bg-light">
+                {% if exposition_content is not None %}
+                    {{ exposition_content|markdownify }} {# Render existing content #}
+                {% else %}
+                    <div id="loading-message">
+                        <p>Generating lesson content, please wait...</p>
+                        {# Optional: Add a spinner or animation #}
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                {% endif %}
+            </div>
+
+            <h2>Interactive Chat / Exercises</h2>
+            {# Removed escapejs filter, rely on standard HTML attribute escaping #}
+            <div id="lesson-interaction-area" class="mb-4" data-lesson-state="{{ lesson_state_json }}">
+                <div id="active-task-area" class="mb-3 p-3 border rounded bg-warning-light">
+                    <!-- Active exercise/assessment will be displayed here -->
+                </div>
+                <div id="chat-history" class="mb-3 p-3 border rounded" style="height: 350px; overflow-y: scroll;"> {# Reduced height slightly #}
+                    <!-- Chat messages -->
+                    {% if conversation_history %}
+                        {% for message in conversation_history %}
+                            <div class="mb-2 p-2 rounded {% if message.sender == 'user' %}bg-light text-dark{% else %}bg-primary text-white{% endif %}">
+                                <strong>{{ message.sender|capfirst }}:</strong> {{ message.content|linebreaksbr }}
+                            </div>
+                        {% endfor %}
+                    {% else %}
+                        <p>No conversation history yet.</p>
+                    {% endif %}
+                </div>
+                <form id="chat-form">
+                    {% csrf_token %}
+                    <div class="input-group">
+                        <input type="text" id="user-message" class="form-control" placeholder="Type your message or answer here...">
+                        <button type="submit" class="btn btn-primary">Send</button>
+                    </div>
+                </form>
+                 {# TODO: Add JS for handling chat form submission (AJAX) #}
+            </div>
+        </div>
+        <div class="col-md-4">
+            <h2>Progress</h2>
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Status</h5>
+                    <p class="card-text">
+                        <span class="badge bg-{% if progress.status == 'completed' %}success{% elif progress.status == 'in_progress' %}warning{% else %}secondary{% endif %}">
+                            {{ progress.get_status_display }}
+                        </span>
+                    </p>
+                    {# TODO: Add more progress details if needed (e.g., score) #}
+                    {# TODO: Add button to mark as complete? Or handle automatically #}
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Function to render KaTeX math
+function renderKatex() {
+    if (typeof renderMathInElement === 'function') {
+        renderMathInElement(document.getElementById('lesson-content-area'), {
+            delimiters: [
+                {left: '$$', right: '$$', display: true},
+                {left: '\\[', right: '\\]', display: true},
+                {left: '$', right: '$', display: false},
+                {left: '\\(', right: '\\)', display: false}
+            ],
+            throwOnError: false
+        });
+        console.log("KaTeX rendering triggered for lesson content.");
+    } else {
+        console.warn("KaTeX renderMathInElement function not found.");
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const interactionArea = document.getElementById('lesson-interaction-area');
+    const chatForm = document.getElementById('chat-form');
+    const userMessageInput = document.getElementById('user-message');
+    const chatHistory = document.getElementById('chat-history');
+    const activeTaskArea = document.getElementById('active-task-area');
+    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+    const lessonContentArea = document.getElementById('lesson-content-area');
+    const loadingMessage = document.getElementById('loading-message');
+    let currentLessonState = {}; // Store parsed state
+
+    // --- Parse Initial Lesson State ---
+    try {
+        const stateJson = interactionArea.dataset.lessonState;
+        if (stateJson) {
+            currentLessonState = JSON.parse(stateJson);
+            console.log("Initial Lesson State:", currentLessonState); // For debugging
+        }
+    } catch (e) {
+        console.error("Error parsing lesson state JSON:", e);
+        appendMessage('system', 'Error: Could not load lesson state.'); // Keep this for state parsing errors
+    }
+
+    // --- Function to Display Active Task ---
+    function displayActiveTask(task) {
+        activeTaskArea.innerHTML = ''; // Clear previous task
+        if (!task) {
+            activeTaskArea.style.display = 'none'; // Hide if no task
+            return;
+        }
+
+        activeTaskArea.style.display = 'block'; // Show if task exists
+        const taskType = currentLessonState.active_exercise ? 'Exercise' : 'Assessment';
+        const prompt = task.prompt || task.question || "No prompt provided."; // Adapt based on actual state structure
+
+        const taskDiv = document.createElement('div');
+        taskDiv.innerHTML = `
+            <h5>${taskType}</h5>
+            <p>${prompt}</p>
+            <small class="text-muted">Enter your answer below and press Send.</small>
+        `;
+        activeTaskArea.appendChild(taskDiv);
+        // Adjust placeholder text based on context
+        userMessageInput.placeholder = `Enter your answer for the ${taskType.toLowerCase()}...`;
+    }
+
+    // --- Initial Task Display ---
+    displayActiveTask(currentLessonState.active_exercise || currentLessonState.active_assessment);
+
+    // --- Asynchronous Content Loading ---
+    if (loadingMessage) {
+        console.log("Loading message found, fetching content asynchronously...");
+        // Construct the URL for the async content generation endpoint
+        // We need a new URL pattern for this, let's assume '/lessons/.../generate_content/' for now
+        const contentUrl = window.location.pathname + 'generate_content/'; // Adjust if needed
+
+        fetch(contentUrl, {
+            method: 'POST', // Use POST to trigger generation
+            headers: {
+                'X-CSRFToken': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest',
+                'Content-Type': 'application/json' // Indicate we expect JSON back
+            },
+            // body: JSON.stringify({}) // No body needed for simple trigger? Or pass lesson ID? Let's assume no body for now.
+        })
+        .then(response => {
+            if (!response.ok) {
+                return response.json().then(err => { throw new Error(err.error || `HTTP error ${response.status}`); });
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.status === 'success' && data.html_content) {
+                console.log("Content received successfully.");
+                lessonContentArea.innerHTML = data.html_content; // Inject the HTML
+                renderKatex(); // Trigger KaTeX rendering *after* content injection
+            } else {
+                console.error("Failed to load content:", data.error || "Unknown error");
+                lessonContentArea.innerHTML = `<p class="text-danger">Error loading lesson content: ${data.error || 'Please try refreshing.'}</p>`;
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching lesson content:', error);
+            lessonContentArea.innerHTML = `<p class="text-danger">Error loading lesson content: ${error.message}. Please try refreshing.</p>`;
+        });
+    } else {
+         // If content was loaded initially, render KaTeX immediately
+         renderKatex();
+    }
+
+    // Function to append a message to the chat history
+    function appendMessage(sender, message) {
+        const messageDiv = document.createElement('div');
+        messageDiv.classList.add('mb-2', 'p-2', 'rounded');
+        if (sender === 'user') {
+            messageDiv.classList.add('bg-light', 'text-dark');
+        } else {
+            messageDiv.classList.add('bg-primary', 'text-white');
+        }
+        // Use textContent for security against XSS unless HTML is explicitly needed and sanitized
+        messageDiv.innerHTML = `<strong>${sender.charAt(0).toUpperCase() + sender.slice(1)}:</strong> `; 
+        // Create a text node for the message content to prevent potential XSS if message contains HTML
+        const messageTextNode = document.createTextNode(message);
+        messageDiv.appendChild(messageTextNode);
+
+        chatHistory.appendChild(messageDiv);
+
+        // Scroll to the bottom
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
+
+    // Remove the placeholder 'No conversation history yet.' if it exists
+    const noHistoryP = chatHistory.querySelector('p');
+    if (noHistoryP && noHistoryP.textContent.includes('No conversation history yet.')) {
+        // We only remove it if there's actual history already, 
+        // otherwise, we remove it before adding the first message.
+        // Let's refine this: remove it when the *first* message is added by JS.
+    }
+
+    chatForm.addEventListener('submit', function(event) {
+        event.preventDefault(); // Prevent default form submission
+
+        const userMessage = userMessageInput.value.trim();
+        if (!userMessage) {
+            return; // Don't send empty messages
+        }
+
+        const isActiveTask = !!(currentLessonState.active_exercise || currentLessonState.active_assessment);
+        const submissionType = isActiveTask ? 'answer' : 'chat';
+
+        // Append user message immediately (optimistic update)
+        appendMessage('user', userMessage + (isActiveTask ? ' (Answer)' : '')); // Indicate if it's an answer
+        
+        // Clear the input field
+        userMessageInput.value = ''; // Clear input
+        userMessageInput.placeholder = "Type your message or answer here..."; // Reset placeholder
+
+        // Remove 'No history' placeholder if it's still there
+        const currentNoHistoryP = chatHistory.querySelector('p');
+         if (currentNoHistoryP && currentNoHistoryP.textContent.includes('No conversation history yet.')) {
+            currentNoHistoryP.remove();
+        }
+
+        // Send message to the server
+        fetch(window.location.pathname, { // Post to the current URL
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest' // Standard header for AJAX requests
+            },
+            body: JSON.stringify({
+                message: userMessage,
+                submission_type: submissionType // Indicate if it's chat or answer
+            })
+        })
+        .then(response => {
+            if (!response.ok) {
+                // Attempt to get error details from response body
+                return response.json().then(err => {
+                    throw new Error(err.error || `HTTP error! status: ${response.status}`);
+                }).catch(() => {
+                    // Fallback if response body is not JSON or empty
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                });
+            }
+            return response.json();
+        })
+        .then(data => {
+            // Update state based on response (important!)
+            if (data.lesson_state) {
+                 try {
+                    currentLessonState = data.lesson_state; // Update local state
+                    console.log("Updated Lesson State:", currentLessonState); // Debugging
+                    // Re-render the active task based on the new state
+                    displayActiveTask(currentLessonState.active_exercise || currentLessonState.active_assessment);
+                 } catch (e) {
+                     console.error("Error processing updated lesson state:", e);
+                     appendMessage('system', 'Error: Could not process state update from server.');
+                 }
+            } else {
+                 console.warn("No lesson_state received in response. State might be stale.");
+            }
+
+            // Display assistant message if provided
+            if (data.assistant_message) {
+                appendMessage('assistant', data.assistant_message);
+            } else if (!data.error) { // Don't log error if server already sent one
+                console.warn('Assistant message missing in response, but no error reported:', data);
+                // Don't display an error here, maybe the action didn't warrant a message (e.g., just state update)
+            }
+
+            // Handle potential errors returned in the JSON response body
+            if (data.error) {
+                console.error('Server returned error:', data.error);
+                appendMessage('system', `Error: ${data.error}`);
+                // Potentially restore user input?
+                // userMessageInput.value = userMessage;
+            }
+        })
+        .catch(error => {
+            console.error('Error sending chat message:', error);
+            // Display error in chat history
+            appendMessage('system', `Error: Could not send message. ${error.message}`);
+            // Optionally, restore the user's message in the input field
+            // userMessageInput.value = userMessage; 
+        });
+    });
+});
+
+    // Add a light background style for the task area (optional)
+    const style = document.createElement('style');
+    style.textContent = `
+        .bg-warning-light { background-color: #fff3cd; } /* Light yellow */
+    `;
+    document.head.appendChild(style);
+
+</script>
+{# Removed comment about separate JS file as logic is now inline #}
+{% endblock %}

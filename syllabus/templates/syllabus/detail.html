@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block title %}{% if syllabus %}{{ syllabus.topic }}{% else %}Syllabus{% endif %} - TechTree{% endblock %}
+
+{% block content %}
+<div class="syllabus-container">
+    {% if not syllabus %}
+        <div class="loading-state">
+            <div class="loading-spinner"></div>
+            <h2>Creating your personalized syllabus...</h2>
+            <p>This may take a moment as we tailor the content to your knowledge level.</p>
+        </div>
+    {% else %}
+        <div class="syllabus-header">
+            <div class="syllabus-title">
+                {# Access topic and level directly from syllabus #}
+                <h1>{{ syllabus.topic }}</h1>
+                <span class="level-badge">{{ syllabus.level }}</span>
+            </div>
+            {# Removed duration and learning objectives as they are not in the current SyllabusResponse #}
+        </div>
+
+        <div class="modules-container">
+            {# Access modules directly from syllabus dictionary #}
+            {% for module in syllabus.modules %}
+                {# module_index is available as module.module_index from the view context #}
+                <div class="module-card">
+                    <!-- Debug: Module ID: {{ module.id }}, Title: {{ module.title }}, Index: {{ module.module_index }} -->
+                    <div class="module-header">
+                        <h2>Module {{ forloop.counter }}: {{ module.title }}</h2>
+                    </div>
+
+                    <div class="lessons-list">
+                        {# Access lessons directly from the module dictionary #}
+                        {% if module.lessons %}
+                             {% for lesson in module.lessons %}
+                                <div class="lesson-item">
+                                    <div class="lesson-info">
+                                        <span class="lesson-number">Lesson {{ forloop.counter }}</span>
+                                        <h3 class="lesson-title">{{ lesson.title }}</h3>
+                                        {# Optionally display lesson summary if available #}
+                                        {# <p class="lesson-summary">{{ lesson.summary }}</p> #}
+                                    </div>
+                                    {# Link uses module.module_index and lesson.lesson_index from context #}
+                                    {# Assuming the target URL name is 'syllabus:lesson_detail' #}
+                                    <a href="{% url 'syllabus:lesson_detail' syllabus_id=syllabus.syllabus_id module_index=module.module_index lesson_index=lesson.lesson_index %}" class="lesson-button">
+                                        View Lesson {# Changed text from Start Lesson #}
+                                    </a>
+                                </div>
+                            {% endfor %}
+                        {% else %}
+                             <p>No lessons found in this module.</p>
+                        {% endif %}
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // If in loading state, redirect to refresh after a few seconds
+    document.addEventListener('DOMContentLoaded', function() {
+        const loadingState = document.querySelector('.loading-state');
+        if (loadingState) {
+            // Only reload if we are actually showing the loading state
+            console.log("In loading state, setting timeout to reload.");
+            setTimeout(function() {
+                window.location.reload();
+            }, 7000); // Increased timeout slightly
+        }
+    });
+</script>
+{% endblock %}

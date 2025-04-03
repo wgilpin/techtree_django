@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Onboarding Assessment - {{ topic|default:"New Topic" }}{% endblock %}
+
+{% block content %}
+<div class="assessment-container" style="max-width: 800px; margin: 2rem auto; background: #fff; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+
+    <h1 style="text-align: center; margin-bottom: 1.5rem;">Assessment: <span id="assessment-topic">{{ topic|default:"Loading..." }}</span></h1>
+
+    <div id="assessment-area">
+        <div id="question-area" style="margin-bottom: 1.5rem;">
+            <p style="font-weight: bold; margin-bottom: 0.5rem;">Question:</p>
+            <p id="question-text">Loading first question...</p>
+            <p style="font-size: 0.9em; color: #666;">Difficulty: <span id="question-difficulty">...</span></p>
+        </div>
+
+        <div id="answer-area" style="margin-bottom: 1.5rem;">
+            <label for="user-answer" style="display: block; margin-bottom: 0.5rem;">Your Answer:</label>
+            <textarea id="user-answer" name="answer" rows="4" style="width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px;"></textarea>
+        </div>
+
+        <div id="feedback-area" style="margin-bottom: 1.5rem; padding: 1rem; border-radius: 4px; background-color: #f0f0f0; display: none;">
+            <p style="font-weight: bold; margin-bottom: 0.5rem;">Feedback:</p>
+            <p id="feedback-text"></p>
+        </div>
+
+        <button id="submit-answer-btn" class="primary-button" style="width: 100%;">Submit Answer</button>
+    </div>
+
+    <div id="result-area" style="display: none; text-align: center; margin-top: 2rem; padding: 1.5rem; border: 1px solid var(--primary-color); border-radius: 8px; background-color: #e8f5e9;">
+        <h2>Assessment Complete!</h2>
+        <p>Topic: <strong id="result-topic"></strong></p>
+        <p>Assessed Knowledge Level: <strong id="result-level"></strong></p>
+        <p style="margin-bottom: 1rem;">Score: <strong id="result-score"></strong>%</p>
+        <a href="{% url 'dashboard' %}" class="primary-button" style="margin-top: 1rem;">Back to Dashboard</a>
+    </div>
+
+    <div id="error-area" style="color: var(--error-color); margin-top: 1rem; text-align: center; display: none;">
+        <p id="error-text"></p>
+    </div>
+
+    {# Hidden input to store the start URL provided by the view that renders this template #}
+    <input type="hidden" id="start-assessment-url" value="{{ start_url|default:'' }}">
+    {# URL for submitting answers #}
+    <input type="hidden" id="submit-answer-url" value="{% url 'onboarding_submit' %}">
+    {# CSRF token for POST requests #}
+    {% csrf_token %}
+
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const topicDisplay = document.getElementById('assessment-topic');
+    const questionArea = document.getElementById('question-area');
+    const questionText = document.getElementById('question-text');
+    const questionDifficulty = document.getElementById('question-difficulty');
+    const answerArea = document.getElementById('answer-area');
+    const userAnswerInput = document.getElementById('user-answer');
+    const feedbackArea = document.getElementById('feedback-area');
+    const feedbackText = document.getElementById('feedback-text');
+    const submitButton = document.getElementById('submit-answer-btn');
+    const assessmentArea = document.getElementById('assessment-area');
+    const resultArea = document.getElementById('result-area');
+    const resultTopic = document.getElementById('result-topic');
+    const resultLevel = document.getElementById('result-level');
+    const resultScore = document.getElementById('result-score');
+    const errorArea = document.getElementById('error-area');
+    const errorText = document.getElementById('error-text');
+
+    const startUrl = document.getElementById('start-assessment-url').value;
+    const submitUrl = document.getElementById('submit-answer-url').value;
+    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+
+    let currentTopic = "{{ topic|default:''|escapejs }}"; // Get topic from Django context
+
+    function displayError(message) {
+        errorText.textContent = `Error: ${message}`;
+        errorArea.style.display = 'block';
+        submitButton.disabled = true; // Disable button on error
+    }
+
+    function hideError() {
+        errorArea.style.display = 'none';
+        submitButton.disabled = false;
+    }
+
+    function updateAssessmentUI(data) {
+        hideError();
+        if (data.is_complete) {
+            assessmentArea.style.display = 'none';
+            resultTopic.textContent = currentTopic;
+            resultLevel.textContent = data.knowledge_level || 'N/A';
+            resultScore.textContent = data.score !== undefined ? parseFloat(data.score).toFixed(1) : 'N/A';
+            resultArea.style.display = 'block';
+            if (data.feedback) {
+                feedbackText.textContent = data.feedback;
+                feedbackArea.style.display = 'block'; // Show final feedback if any
+            }
+        } else {
+            questionText.textContent = data.question || 'Error: No question received.';
+            questionDifficulty.textContent = data.difficulty || 'N/A';
+            userAnswerInput.value = ''; // Clear previous answer
+            if (data.feedback) {
+                feedbackText.textContent = data.feedback;
+                feedbackArea.style.display = 'block';
+            } else {
+                feedbackArea.style.display = 'none';
+            }
+            assessmentArea.style.display = 'block';
+            resultArea.style.display = 'none';
+            userAnswerInput.focus();
+        }
+        submitButton.disabled = false;
+        submitButton.textContent = 'Submit Answer';
+    }
+
+    async function startAssessment() {
+        if (!startUrl) {
+            displayError("Assessment start URL is missing.");
+            return;
+        }
+        console.log(`Starting assessment with URL: ${startUrl}`);
+        submitButton.disabled = true;
+        submitButton.textContent = 'Loading...';
+        hideError();
+
+        try {
+            const response = await fetch(startUrl, {
+                method: 'GET', // Matches view decorator
+                headers: {
+                    'Accept': 'application/json',
+                    // No CSRF needed for GET
+                },
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+            console.log("Start assessment response:", data);
+
+            if (data.error) {
+                throw new Error(data.error);
+            }
+
+            // Update topic display if not already set
+            if (!topicDisplay.textContent || topicDisplay.textContent === 'Loading...') {
+                 topicDisplay.textContent = currentTopic || 'Assessment';
+            }
+            updateAssessmentUI(data);
+
+        } catch (error) {
+            console.error('Error starting assessment:', error);
+            displayError(error.message || 'Could not start assessment.');
+            submitButton.textContent = 'Submit Answer'; // Reset button text
+        }
+    }
+
+    async function submitAnswer() {
+        const answer = userAnswerInput.value.trim();
+        if (!answer) {
+            alert('Please enter an answer.');
+            return;
+        }
+
+        console.log(`Submitting answer: ${answer}`);
+        submitButton.disabled = true;
+        submitButton.textContent = 'Processing...';
+        hideError();
+        feedbackArea.style.display = 'none'; // Hide old feedback
+
+        try {
+            const formData = new FormData();
+            formData.append('answer', answer);
+
+            const response = await fetch(submitUrl, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrfToken,
+                    'Accept': 'application/json',
+                },
+                body: formData, // Send as form data
+            });
+
+            if (!response.ok) {
+                 let errorMsg = `HTTP error! status: ${response.status}`;
+                 try {
+                     const errorData = await response.json();
+                     errorMsg = errorData.error || errorMsg;
+                 } catch(e) { /* Ignore if response is not JSON */ }
+                throw new Error(errorMsg);
+            }
+
+            const data = await response.json();
+            console.log("Submit answer response:", data);
+
+            if (data.error) {
+                throw new Error(data.error);
+            }
+
+            updateAssessmentUI(data);
+
+        } catch (error) {
+            console.error('Error submitting answer:', error);
+            displayError(error.message || 'Could not submit answer.');
+            submitButton.textContent = 'Submit Answer'; // Reset button text
+        }
+    }
+
+    // Event listener for the submit button
+    submitButton.addEventListener('click', submitAnswer);
+
+    // Start the assessment automatically if startUrl is present
+    if (startUrl) {
+        startAssessment();
+    } else {
+         // If startUrl isn't provided by the rendering view's context,
+         // we need a way for the user to trigger it (e.g., from dashboard link)
+         // Or display an error if this template is loaded directly without context.
+         if (!currentTopic) {
+             displayError("No topic specified for assessment.");
+         } else {
+             // If topic is known but URL isn't, maybe construct URL? Risky.
+             // Best practice is for the view rendering this template to provide start_url.
+             displayError("Assessment cannot be started. Configuration missing.");
+         }
+    }
+});
+</script>
+{% endblock %}

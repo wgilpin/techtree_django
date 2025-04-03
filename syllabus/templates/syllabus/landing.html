@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Syllabus - TechTree{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Syllabus Generation</h1>
+    <p>Enter a topic and select your current knowledge level to generate a personalized learning syllabus.</p>
+
+    {# TODO: Add form validation and error display #}
+    <form method="post" action="{% url 'syllabus:generate' %}">
+        {% csrf_token %}
+        <div class="mb-3">
+            <label for="topic" class="form-label">Topic:</label>
+            <input type="text" class="form-control" id="topic" name="topic" required placeholder="e.g., Python programming, Quantum Physics">
+        </div>
+        <div class="mb-3">
+            <label for="level" class="form-label">Knowledge Level:</label>
+            <select class="form-select" id="level" name="level">
+                <option value="beginner" selected>Beginner</option>
+                <option value="early learner">Early Learner</option>
+                <option value="good knowledge">Good Knowledge</option>
+                <option value="advanced">Advanced</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Generate Syllabus</button>
+    </form>
+
+    <hr>
+
+    <h2>Your Syllabi</h2>
+    {# TODO: List existing syllabi for the user #}
+    <p>Your previously generated syllabi will appear here.</p>
+
+</div>
+{% endblock %}

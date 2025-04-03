@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}Lesson: {{ lesson.title }} - TechTree{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'dashboard' %}">Dashboard</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'syllabus:detail' syllabus_id=syllabus_id %}">Syllabus</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'syllabus:module_detail' syllabus_id=syllabus_id module_index=module_index %}">Module {{ module_index|add:1 }}</a></li>
+            <li class="breadcrumb-item active" aria-current="page">Lesson {{ lesson.lesson_index|add:1 }}</li>
+        </ol>
+    </nav>
+
+    <h1>Lesson {{ lesson.lesson_index|add:1 }}: {{ lesson.title }}</h1>
+    {% if lesson.summary %}
+        <p class="lead">{{ lesson.summary }}</p>
+    {% endif %}
+    {% if lesson.duration %}
+        <p><em>Estimated duration: {{ lesson.duration }}</em></p>
+    {% endif %}
+
+    <hr>
+
+    {# Placeholder for actual lesson content (text, exercises, etc.) #}
+    <div class="lesson-content">
+        <h2>Lesson Content</h2>
+        <p>The actual lesson content (exposition, exercises, assessments) will be loaded here.</p>
+        {# This might involve fetching LessonContent model data or integrating with another app/service #}
+        <p>Lesson ID: {{ lesson.id }}</p>
+    </div>
+
+    <div class="mt-4">
+        {# TODO: Add navigation to next/previous lesson if applicable #}
+        <a href="{% url 'syllabus:module_detail' syllabus_id=syllabus_id module_index=module_index %}" class="btn btn-secondary">&laquo; Back to Module</a>
+    </div>
+</div>
+{% endblock %}

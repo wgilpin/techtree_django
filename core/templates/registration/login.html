@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}Login - TechTree{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+    <div class="auth-card">
+        <div class="auth-header">
+            <div class="auth-logo-text">TechTree</div>
+            <h1>Login to TechTree</h1>
+            <p>Welcome back! Please enter your credentials to continue.</p>
+        </div>
+
+        {% if form.non_field_errors %}
+            <div class="error-message">
+                {% for error in form.non_field_errors %}
+                    <p>{{ error }}</p>
+                {% endfor %}
+            </div>
+        {% endif %}
+        {% if form.errors %}
+             <div class="error-message">
+                {% for field, errors in form.errors.items %}
+                    {% for error in errors %}
+                         <p>{{ field }}: {{ error }}</p>
+                    {% endfor %}
+                {% endfor %}
+            </div>
+        {% endif %}
+
+
+        <div class="auth-form">
+            {# Use Django's standard login URL name #}
+            <form method="POST" action="{% url 'login' %}">
+                {% csrf_token %}
+
+                {# Render the form fields. Default AuthenticationForm uses 'username' #}
+                {# We might need to customize the form later if email login is required #}
+                 {% for field in form %}
+                    <div class="form-group">
+                        {{ field.label_tag }}
+                        {{ field }}
+                        {% if field.help_text %}
+                            <small class="form-text text-muted">{{ field.help_text }}</small>
+                        {% endif %}
+                        {% for error in field.errors %}
+                            <div class="error-message">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                {% endfor %}
+
+                {# Removed Remember me / Forgot password section for simplicity initially #}
+
+                <button type="submit" class="auth-button">Login</button>
+
+                <div class="auth-footer">
+                    {# Link to register using the name defined in core.urls (no namespace now) #}
+                    <p>Don't have an account? <a href="{% url 'register' %}">Register</a></p>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

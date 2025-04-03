@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block title %}Register - TechTree{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+    <div class="auth-card">
+        <div class="auth-header">
+            <div class="auth-logo-text">TechTree</div>
+            <h1>Create an Account</h1>
+            <p>Join TechTree to start your learning journey!</p>
+        </div>
+
+        {% if form.non_field_errors %}
+            <div class="error-message">
+                {% for error in form.non_field_errors %}
+                    <p>{{ error }}</p>
+                {% endfor %}
+            </div>
+        {% endif %}
+        {% if form.errors %}
+             <div class="error-message">
+                {% for field, errors in form.errors.items %}
+                    {% for error in errors %}
+                         {# Avoid double-displaying non-field errors if handled above #}
+                         {% if field != '__all__' %}
+                            <p>{{ field }}: {{ error }}</p>
+                         {% endif %}
+                    {% endfor %}
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        <div class="auth-form">
+            {# Assuming a 'register' URL name will be created #}
+            <form method="POST" action="{% url 'register' %}">
+                {% csrf_token %}
+
+                {# Render the form fields. Assumes a custom form will be used #}
+                {# Default UserCreationForm has username, password1, password2 #}
+                {% for field in form %}
+                    <div class="form-group">
+                        {{ field.label_tag }}
+                        {{ field }}
+                        {% if field.help_text %}
+                            <small class="form-text text-muted">{{ field.help_text }}</small>
+                        {% endif %}
+                        {% for error in field.errors %}
+                            <div class="error-message">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                {% endfor %}
+
+                {# Removed Terms of Service checkbox for simplicity initially #}
+
+                <button type="submit" class="auth-button">Register</button>
+
+                <div class="auth-footer">
+                    <p>Already have an account? <a href="{% url 'login' %}">Login</a></p>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
