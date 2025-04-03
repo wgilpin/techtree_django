@@ -253,7 +253,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         // Send message to the server
-        fetch(window.location.pathname, { // Post to the current URL
+        fetch(window.location.pathname + 'interact/', { // Post to the interaction URL
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

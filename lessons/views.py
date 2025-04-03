@@ -79,10 +79,6 @@ def lesson_detail(
         if lesson_content:
             if isinstance(lesson_content.content, dict):
                 exposition_content_value = lesson_content.content.get('exposition', '') # Get the string value
-                if exposition_content_value is not None:
-                     logger.debug("Found existing exposition content. Type: %s", type(exposition_content_value))
-                else:
-                     logger.warning("Existing lesson content (pk=%s) dictionary is missing 'exposition' key.", lesson_content.pk)
             else:
                 # Log if existing content is not the expected dictionary format
                 logger.warning(
@@ -106,7 +102,6 @@ def lesson_detail(
             'conversation_history': conversation_history,
             'lesson_state_json': json.dumps(progress.lesson_state_json) if progress and progress.lesson_state_json else '{}',
         }
-        logger.debug("Context being passed to template: exposition_content type: %s", type(context.get('exposition_content'))) # Log type being passed
         return render(request, "lessons/lesson_detail.html", context)
 
     except (Syllabus.DoesNotExist, Module.DoesNotExist, Lesson.DoesNotExist) as exc:
@@ -206,13 +201,22 @@ def handle_lesson_interaction(
                 error_message = "Failed to process interaction."
                 status_code = 500
 
-    except (Syllabus.DoesNotExist, Module.DoesNotExist, Lesson.DoesNotExist):
+    # Specific exceptions first
+    except (Syllabus.DoesNotExist, Module.DoesNotExist, Lesson.DoesNotExist, Http404) as exc: # Catch Http404 here
         logger.warning(
-            "Lesson context not found during interaction for syllabus %s, module %s, lesson %s",
-            syllabus_id, module_index, lesson_index,
+            "Lesson context not found during interaction for syllabus %s, module %s, lesson %s: %s",
+            syllabus_id, module_index, lesson_index, str(exc)
         )
         error_message = "Lesson context not found."
         status_code = 404
+    except json.JSONDecodeError: # Handle JSON errors specifically
+        logger.warning(
+            "Received invalid JSON in AJAX request from user %s for lesson %s.",
+            user.username, f"{syllabus_id}:{module_index}:{lesson_index}"
+        )
+        error_message = "Invalid JSON format."
+        status_code = 400
+    # Generic exception last
     except Exception as e:
         logger.exception(
             "Unexpected error handling interaction for user %s, lesson %s.",

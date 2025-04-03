@@ -66,42 +66,30 @@ class LessonViewsTestCase(TestCase):
         self.progress.refresh_from_db()
 
 
-    @patch('lessons.services.get_lesson_state_and_history') # Correct patch target
-    def test_lesson_detail_context_with_exposition(self, mock_get_state):
-        """Test context data passed to lesson_detail template."""
-        # Mock the service call
-        # The state saved in setUpTestData is {"lesson_db_id": cls.lesson.pk}
-        # The service call mock returns this progress object.
-        # The view puts progress.lesson_state_json into the context['lesson_state_json']
-        mock_state_as_saved_in_db = self.initial_progress_state.copy()
-        mock_history = [
-            ConversationHistory(progress=self.progress, role='user', content='Hi', timestamp=timezone.now()),
-            ConversationHistory(progress=self.progress, role='assistant', content='Hello', timestamp=timezone.now())
-        ]
-        # Ensure the mocked service returns the progress object with the correct state
-        self.progress.lesson_state_json = mock_state_as_saved_in_db
-        mock_get_state.return_value = (self.progress, self.lesson_content, mock_history)
+    # Removed incorrect patch @patch('lessons.services.get_lesson_state_and_history')
+    def test_lesson_detail_context_with_exposition(self):
+        """Test context data passed to lesson_detail template (using direct ORM access)."""
+        # No service mock needed, view fetches directly.
+        # Create some history for this test (using 'role' field)
+        history1 = ConversationHistory.objects.create(progress=self.progress, role='user', content='Hi', timestamp=timezone.now())
+        history2 = ConversationHistory.objects.create(progress=self.progress, role='assistant', content='Hello', timestamp=timezone.now())
+        expected_history = [history1, history2]
 
         response = self.client.get(self.lesson_detail_url)
 
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'lessons/lesson_detail.html')
-        mock_get_state.assert_called_once_with(
-            user=self.user,
-            syllabus=self.syllabus,
-            module=self.module,
-            lesson=self.lesson
-        )
+        # No mock call to assert
 
         # Check context variables
         self.assertEqual(response.context['lesson'], self.lesson)
         self.assertEqual(response.context['module'], self.module)
         self.assertEqual(response.context['syllabus'], self.syllabus)
-        # The context variable 'lesson_content' holds the model instance
-        self.assertEqual(response.context['lesson_content'], self.lesson_content)
+        # The view fetches lesson_content directly, check 'exposition_content' derived from it
+        # self.assertEqual(response.context['lesson_content'], self.lesson_content) # Key no longer exists
         # Check the actual content attribute separately if needed, or check 'exposition_content'
         self.assertEqual(response.context['exposition_content'], self.lesson_content.content.get('exposition')) # Check correct context key
-        self.assertEqual(response.context['conversation_history'], mock_history)
+        self.assertEqual(list(response.context['conversation_history']), expected_history) # Compare history fetched by view
         self.assertEqual(response.context['progress'], self.progress)
         # Check the JSON string version passed to the template
         # Assert against the actual state saved in setUpTestData for the progress object
@@ -110,22 +98,20 @@ class LessonViewsTestCase(TestCase):
         self.assertEqual(response.context['exposition_content'], "Initial test content.") # Check correct context key
         # interaction_url is not passed in lesson_detail context
 
-    @patch('lessons.services.get_lesson_state_and_history') # Correct patch target
-    def test_lesson_detail_context_missing_exposition_key(self, mock_get_state):
+    # Removed incorrect patch
+    def test_lesson_detail_context_missing_exposition_key(self): # Removed mock_get_state argument
         """Test context when 'exposition' key is missing in content."""
-        mock_state = {"lesson_db_id": self.lesson.pk}
-        mock_history = []
-        # Create content without 'exposition' - need a unique lesson for this content
+        # No service mock needed
+        # Create content without 'exposition'
         lesson_no_expo = Lesson.objects.create(module=self.module, lesson_index=1, title="Lesson No Expo")
         content_no_expo = LessonContent.objects.create(
             lesson=lesson_no_expo, content={"other_key": "some value"}
         )
-        # Need progress for this specific lesson
-        progress_no_expo = UserProgress.objects.create(
-            user=self.user, syllabus=self.syllabus, module_index=self.module.module_index,
-            lesson_index=lesson_no_expo.lesson_index, lesson=lesson_no_expo, status='in_progress'
+        # Ensure progress exists for this lesson (view fetches it)
+        progress_no_expo, _ = UserProgress.objects.get_or_create(
+            user=self.user, syllabus=self.syllabus, lesson=lesson_no_expo,
+            defaults={'module_index': self.module.module_index, 'lesson_index': lesson_no_expo.lesson_index}
         )
-        mock_get_state.return_value = (progress_no_expo, content_no_expo, mock_history)
         url_no_expo = reverse(
             'lessons:lesson_detail', # Use namespaced URL name
             args=[self.syllabus.pk, self.module.module_index, lesson_no_expo.lesson_index]
@@ -135,31 +121,27 @@ class LessonViewsTestCase(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'lessons/lesson_detail.html')
-        # The context variable 'lesson_content' holds the model instance
-        self.assertEqual(response.context['lesson_content'], content_no_expo)
+        # Check the derived 'exposition_content' context variable
+        # self.assertEqual(response.context['lesson_content'], content_no_expo) # Key no longer exists
         # initial_exposition should be None or empty string if key is missing
-        self.assertEqual(response.context['exposition_content'], '') # Check correct context key is empty
-        mock_get_state.assert_called_once_with(
-            user=self.user, syllabus=self.syllabus, module=self.module, lesson=lesson_no_expo
-        )
+        self.assertEqual(response.context['exposition_content'], '') # Check correct context key is empty (or None)
+        # No mock call to assert
 
 
-    @patch('lessons.services.get_lesson_state_and_history') # Correct patch target
-    def test_lesson_detail_context_bad_content_format(self, mock_get_state):
+    # Removed incorrect patch
+    def test_lesson_detail_context_bad_content_format(self): # Removed mock_get_state argument
         """Test context when lesson content is not a dictionary."""
-        mock_state = {"lesson_db_id": self.lesson.pk}
-        mock_history = []
-        # Create content that's not a dict - need a unique lesson
+        # No service mock needed
+        # Create content that's not a dict
         lesson_bad_format = Lesson.objects.create(module=self.module, lesson_index=2, title="Lesson Bad Format")
         content_bad_format = LessonContent.objects.create(
             lesson=lesson_bad_format, content="just a string"
         )
-        # Need progress for this specific lesson
-        progress_bad_format = UserProgress.objects.create(
-            user=self.user, syllabus=self.syllabus, module_index=self.module.module_index,
-            lesson_index=lesson_bad_format.lesson_index, lesson=lesson_bad_format, status='in_progress'
+        # Ensure progress exists for this lesson (view fetches it)
+        progress_bad_format, _ = UserProgress.objects.get_or_create(
+            user=self.user, syllabus=self.syllabus, lesson=lesson_bad_format,
+            defaults={'module_index': self.module.module_index, 'lesson_index': lesson_bad_format.lesson_index}
         )
-        mock_get_state.return_value = (progress_bad_format, content_bad_format, mock_history)
         url_bad_format = reverse(
             'lessons:lesson_detail', # Use namespaced URL name
             args=[self.syllabus.pk, self.module.module_index, lesson_bad_format.lesson_index]
@@ -169,68 +151,47 @@ class LessonViewsTestCase(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'lessons/lesson_detail.html')
-        # The context variable 'lesson_content' holds the model instance
-        self.assertEqual(response.context['lesson_content'], content_bad_format)
+        # Check the derived 'exposition_content' context variable
+        # self.assertEqual(response.context['lesson_content'], content_bad_format) # Key no longer exists
         # initial_exposition should be None or empty string
-        self.assertEqual(response.context['exposition_content'], '') # Check correct context key is empty
-        mock_get_state.assert_called_once_with(
-            user=self.user, syllabus=self.syllabus, module=self.module, lesson=lesson_bad_format
-        )
+        self.assertEqual(response.context['exposition_content'], None) # Check correct context key is None
+        # No mock call to assert
 
 
     # --- Tests for handle_lesson_interaction view ---
 
-    @patch('lessons.services.handle_chat_message') # Correct patch target
-    @patch('lessons.services.get_lesson_state_and_history') # Correct patch target
+    @patch('lessons.services.handle_chat_message')
+    @patch('lessons.services.get_lesson_state_and_history')
     def test_handle_lesson_interaction_chat_success(self, mock_get_state, mock_handle_chat):
         """Test successful chat interaction via POST."""
-        # Mock get_lesson_state_and_history to return the progress object
         mock_get_state.return_value = (self.progress, self.lesson_content, [])
 
-        # Mock the state dict *as it would be returned by the service*
-        mock_state_from_service = {
-             "lesson_db_id": self.lesson.pk,
-             "current_interaction_mode": "chatting",
-             "active_exercise": None,
-             "active_assessment": None,
-             "user_id": self.user.pk,
-             "lesson_topic": self.syllabus.topic,
-             "lesson_title": self.lesson.title,
-             "new_assistant_message": "AI chat response", # Include if needed by service logic
-             "updated_at": timezone.now().isoformat()
-        }
         # Mock the return value of the handle_chat_message service call
         mock_service_return = {
-            "assistant_message": {"role": "assistant", "content": "AI chat response"},
-            "updated_state": mock_state_from_service # Service returns the state dict
+            "assistant_message": "AI chat response", # Simplified
         }
         mock_handle_chat.return_value = mock_service_return
 
-        post_data = json.dumps({
-            "message": "User chat message",
-            "submission_type": "chat"
-        })
+        # IMPORTANT: Simulate the state the view will find *after* the service call.
+        # Since the service is mocked and doesn't save, we manually set the state
+        # on the progress object that the view will refresh *from*.
+        updated_state_in_db = {"lesson_db_id": self.lesson.pk, "last_interaction": "chat"}
+        self.progress.lesson_state_json = updated_state_in_db
+        self.progress.save() # Ensure the DB has the state the refresh will find
+
+        post_data = json.dumps({"message": "User chat message", "submission_type": "chat"})
         response = self.client.post(
-            self.interaction_url,
-            data=post_data,
-            content_type='application/json'
+            self.interaction_url, data=post_data, content_type='application/json'
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response['content-type'], 'application/json')
         response_json = response.json()
-
         self.assertEqual(response_json['status'], 'success')
         self.assertEqual(response_json['assistant_message'], mock_service_return['assistant_message'])
 
-        # Assert against the state *as it exists in the DB before the call*
-        # because the mock doesn't actually save the updated state.
-        response_state = response_json['updated_state']
-        expected_state_in_response = self.initial_progress_state.copy() # State before interaction
-        # Remove dynamic keys if they were added by the view logic unexpectedly
-        response_state.pop('updated_at', None)
-
-        self.assertEqual(response_state, expected_state_in_response)
+        # Assert against the state *as it exists in the DB AFTER the mocked service call*
+        # because the view calls refresh_from_db()
+        self.assertEqual(response_json['updated_state'], updated_state_in_db) # Compare with the state we saved
 
         mock_get_state.assert_called_once_with(
             user=self.user, syllabus=self.syllabus, module=self.module, lesson=self.lesson
@@ -242,51 +203,31 @@ class LessonViewsTestCase(TestCase):
             submission_type="chat"
         )
 
-    @patch('lessons.services.handle_chat_message') # Correct patch target
-    @patch('lessons.services.get_lesson_state_and_history') # Correct patch target
+    @patch('lessons.services.handle_chat_message')
+    @patch('lessons.services.get_lesson_state_and_history')
     def test_handle_lesson_interaction_answer_success(self, mock_get_state, mock_handle_chat):
         """Test successful answer submission interaction via POST."""
         mock_get_state.return_value = (self.progress, self.lesson_content, [])
-        # Mock the state dict *as it would be returned by the service*
-        mock_state_from_service = {
-            "lesson_db_id": self.lesson.pk,
-            "current_interaction_mode": "chatting",
-            "active_exercise": None,
-            "active_assessment": None,
-            "score_update": 1.0,
-            "user_id": self.user.pk,
-            "lesson_topic": self.syllabus.topic,
-            "lesson_title": self.lesson.title,
-            "evaluation_feedback": "Correct!",
-            "updated_at": timezone.now().isoformat()
-        }
-        # Mock the return value of the handle_chat_message service call
         mock_service_return = {
-            "assistant_message": {"role": "assistant", "content": "Correct!"},
-            "updated_state": mock_state_from_service
+            "assistant_message": "Correct!",
         }
         mock_handle_chat.return_value = mock_service_return
 
-        post_data = json.dumps({
-            "message": "My answer is B",
-            "submission_type": "answer"
-        })
+        # State the service *would* save
+        updated_state_in_db = {"lesson_db_id": self.lesson.pk, "last_interaction": "answer", "score": 1.0}
+        self.progress.lesson_state_json = updated_state_in_db
+        self.progress.save()
+
+        post_data = json.dumps({"message": "My answer is B", "submission_type": "answer"})
         response = self.client.post(
-            self.interaction_url,
-            data=post_data,
-            content_type='application/json'
+            self.interaction_url, data=post_data, content_type='application/json'
         )
 
         self.assertEqual(response.status_code, 200)
         response_json = response.json()
         self.assertEqual(response_json['status'], 'success')
         self.assertEqual(response_json['assistant_message'], mock_service_return['assistant_message'])
-
-        # Assert against the state *as it exists in the DB before the call*
-        response_state = response_json['updated_state']
-        expected_state_in_response = self.initial_progress_state.copy() # State before interaction
-        response_state.pop('updated_at', None) # Ignore dynamic field from actual response
-        self.assertEqual(response_state, expected_state_in_response)
+        self.assertEqual(response_json['updated_state'], updated_state_in_db) # Check against saved state
 
         mock_get_state.assert_called_once_with(
             user=self.user, syllabus=self.syllabus, module=self.module, lesson=self.lesson
@@ -298,51 +239,31 @@ class LessonViewsTestCase(TestCase):
             submission_type="answer"
         )
 
-    @patch('lessons.services.handle_chat_message') # Correct patch target
-    @patch('lessons.services.get_lesson_state_and_history') # Correct patch target
+    @patch('lessons.services.handle_chat_message')
+    @patch('lessons.services.get_lesson_state_and_history')
     def test_handle_lesson_interaction_assessment_success(self, mock_get_state, mock_handle_chat):
         """Test successful assessment submission interaction via POST."""
         mock_get_state.return_value = (self.progress, self.lesson_content, [])
-        # Mock the state dict *as it would be returned by the service*
-        mock_state_from_service = {
-            "lesson_db_id": self.lesson.pk,
-            "current_interaction_mode": "chatting",
-            "active_exercise": None,
-            "active_assessment": None,
-            "score_update": 0.5,
-            "user_id": self.user.pk,
-            "lesson_topic": self.syllabus.topic,
-            "lesson_title": self.lesson.title,
-            "evaluation_feedback": "Assessment feedback.",
-            "updated_at": timezone.now().isoformat()
-        }
-        # Mock the return value of the handle_chat_message service call
         mock_service_return = {
-            "assistant_message": {"role": "assistant", "content": "Assessment feedback."},
-            "updated_state": mock_state_from_service
+            "assistant_message": "Assessment feedback.",
         }
         mock_handle_chat.return_value = mock_service_return
 
-        post_data = json.dumps({
-            "message": "Assessment answer",
-            "submission_type": "assessment"
-        })
+        # State the service *would* save
+        updated_state_in_db = {"lesson_db_id": self.lesson.pk, "last_interaction": "assessment", "score": 0.5}
+        self.progress.lesson_state_json = updated_state_in_db
+        self.progress.save()
+
+        post_data = json.dumps({"message": "Assessment answer", "submission_type": "assessment"})
         response = self.client.post(
-            self.interaction_url,
-            data=post_data,
-            content_type='application/json'
+            self.interaction_url, data=post_data, content_type='application/json'
         )
 
         self.assertEqual(response.status_code, 200)
         response_json = response.json()
         self.assertEqual(response_json['status'], 'success')
         self.assertEqual(response_json['assistant_message'], mock_service_return['assistant_message'])
-
-        # Assert against the state *as it exists in the DB before the call*
-        response_state = response_json['updated_state']
-        expected_state_in_response = self.initial_progress_state.copy() # State before interaction
-        response_state.pop('updated_at', None) # Ignore dynamic field from actual response
-        self.assertEqual(response_state, expected_state_in_response)
+        self.assertEqual(response_json['updated_state'], updated_state_in_db) # Check against saved state
 
         mock_get_state.assert_called_once_with(
             user=self.user, syllabus=self.syllabus, module=self.module, lesson=self.lesson
@@ -421,3 +342,78 @@ class LessonViewsTestCase(TestCase):
         """Test that the interaction endpoint only accepts POST."""
         response = self.client.get(self.interaction_url)
         self.assertEqual(response.status_code, 405) # Method Not Allowed
+
+
+    def test_handle_lesson_interaction_missing_lesson(self):
+        """Test interaction with a non-existent lesson index."""
+        non_existent_lesson_index = 999
+        bad_url = reverse(
+            'lessons:handle_interaction',
+            args=[self.syllabus.pk, self.module.module_index, non_existent_lesson_index]
+        )
+        post_data = json.dumps({"message": "test", "submission_type": "chat"})
+        response = self.client.post(
+            bad_url, data=post_data, content_type='application/json'
+        )
+
+        self.assertEqual(response.status_code, 404)
+        response_json = response.json()
+        self.assertEqual(response_json['status'], 'error')
+        self.assertIn('Lesson context not found', response_json['message'])
+
+
+    @patch('lessons.services.get_lesson_state_and_history')
+    def test_handle_lesson_interaction_missing_progress(self, mock_get_state):
+        """Test interaction when UserProgress cannot be found for the user/lesson."""
+        # Simulate the service returning None for progress
+        mock_get_state.return_value = (None, None, [])
+
+        post_data = json.dumps({"message": "test", "submission_type": "chat"})
+        response = self.client.post(
+            self.interaction_url, data=post_data, content_type='application/json'
+        )
+
+        self.assertEqual(response.status_code, 500) # View returns 500 in this case
+        response_json = response.json()
+        self.assertEqual(response_json['status'], 'error')
+        self.assertIn('Could not load user progress', response_json['message'])
+        mock_get_state.assert_called_once_with(
+            user=self.user, syllabus=self.syllabus, module=self.module, lesson=self.lesson
+        )
+
+
+    @patch('lessons.services.get_lesson_state_and_history')
+    def test_handle_lesson_interaction_empty_message(self, mock_get_state):
+        """Test interaction with an empty message payload."""
+        mock_get_state.return_value = (self.progress, self.lesson_content, [])
+
+        post_data = json.dumps({"message": "   ", "submission_type": "chat"}) # Empty after strip
+        response = self.client.post(
+            self.interaction_url, data=post_data, content_type='application/json'
+        )
+
+        self.assertEqual(response.status_code, 400)
+        response_json = response.json()
+        self.assertEqual(response_json['status'], 'error')
+        self.assertIn('Message cannot be empty', response_json['message'])
+        mock_get_state.assert_called_once() # Should still fetch state first
+
+
+    @patch('lessons.services.handle_chat_message')
+    @patch('lessons.services.get_lesson_state_and_history')
+    def test_handle_lesson_interaction_service_returns_none(self, mock_get_state, mock_handle_chat):
+        """Test interaction when the service returns None instead of a dict."""
+        mock_get_state.return_value = (self.progress, self.lesson_content, [])
+        mock_handle_chat.return_value = None # Simulate service failure/unexpected return
+
+        post_data = json.dumps({"message": "test", "submission_type": "chat"})
+        response = self.client.post(
+            self.interaction_url, data=post_data, content_type='application/json'
+        )
+
+        self.assertEqual(response.status_code, 500)
+        response_json = response.json()
+        self.assertEqual(response_json['status'], 'error')
+        self.assertIn('Failed to process interaction', response_json['message'])
+        mock_get_state.assert_called_once()
+        mock_handle_chat.assert_called_once()

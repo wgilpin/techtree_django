@@ -111,7 +111,6 @@ def get_or_create_lesson_content(lesson: Lesson) -> Optional[LessonContent]:
     Returns:
         The existing or newly created LessonContent object, or None if generation fails.
     """
-    logger.debug("Attempting to fetch content for Lesson ID: %s", lesson.pk)
     existing_content = LessonContent.objects.filter(lesson=lesson).first()
 
     if existing_content:
@@ -143,7 +142,6 @@ def get_or_create_lesson_content(lesson: Lesson) -> Optional[LessonContent]:
                 return None  # Cannot proceed without serializable structure
 
             # 2. Initialize LLM
-            logger.debug("Initializing LLM...")
             llm = _get_llm()
             if not llm:
                 logger.error("LLM could not be initialized. Cannot generate content.")
@@ -159,11 +157,6 @@ def get_or_create_lesson_content(lesson: Lesson) -> Optional[LessonContent]:
                 "latex_formatting_instructions": LATEX_FORMATTING_INSTRUCTIONS,
             }
             formatted_prompt = GENERATE_LESSON_CONTENT_PROMPT.format(**prompt_input)
-            logger.debug(
-                "Formatted prompt for lesson %s:\n%s",
-                lesson.pk,
-                formatted_prompt[0:100],
-            )
 
             # 4. Call LLM with retry
             logger.info("Calling LLM to generate content for lesson %s...", lesson.pk)
@@ -175,15 +168,6 @@ def get_or_create_lesson_content(lesson: Lesson) -> Optional[LessonContent]:
                     if hasattr(response, "content")
                     else ""
                 )
-                logger.debug(
-                    "Raw LLM response content for lesson %s: %s",
-                    lesson.pk,
-                    (
-                        generated_text[:500] + "..."
-                        if len(generated_text) > 500
-                        else generated_text
-                    ),
-                )  # Log truncated response
             except Exception as llm_err:
                 logger.error(
                     "LLM invocation failed for lesson %s: %s",
@@ -206,10 +190,6 @@ def get_or_create_lesson_content(lesson: Lesson) -> Optional[LessonContent]:
             # 5. Create and save LessonContent object atomically
             with transaction.atomic():
                 # Attempt to parse the generated text as JSON
-                logger.debug(
-                    "Attempting to parse LLM response as JSON for lesson %s...",
-                    lesson.pk,
-                )
                 try:
                     # Clean potential markdown code fences using removeprefix/removesuffix
                     cleaned_text = generated_text
@@ -258,11 +238,6 @@ def get_or_create_lesson_content(lesson: Lesson) -> Optional[LessonContent]:
                         lesson.pk,
                     )
 
-                logger.debug(
-                    "Attempting to save LessonContent for lesson %s with data: %s",
-                    lesson.pk,
-                    str(content_data)[:200] + "...",
-                )  # Log truncated data
                 new_content = LessonContent.objects.create(
                     lesson=lesson,
                     content=content_data,  # Use the parsed (or fallback) data
@@ -462,7 +437,6 @@ def get_lesson_state_and_history(
                 progress.lesson_state_json = lesson_state  # Save corrected state
                 progress.save(update_fields=["lesson_state_json", "updated_at"])
 
-            logger.debug("Loaded existing state for UserProgress %s.", progress.pk)
         elif progress.lesson_state_json is not None:
             logger.warning(
                 "UserProgress %s has non-dict lesson_state_json (%s). Re-initializing.",
@@ -579,9 +553,6 @@ def handle_chat_message(
             message_type=user_message_type,
             content=user_message_content,
         )
-        logger.debug(
-            "Saved user message %s (type: %s)", user_message.pk, user_message_type
-        )
     except Exception as e:
         logger.error(
             "Failed to save user message for UserProgress %s: %s",
@@ -619,9 +590,6 @@ def handle_chat_message(
         current_state["history_context"] = formatted_history
         # Remove the other key if it exists from previous state loads
         current_state.pop("conversation_history", None)
-        logger.debug(
-            "Added %d messages to graph state history.", len(formatted_history)
-        )
     except Exception as e:
         logger.error(
             "Failed to fetch conversation history for graph state (UserProgress %s): %s",
@@ -724,7 +692,6 @@ def handle_chat_message(
                 # Ensure we save the string content
                 content=str(assistant_response_content),
             )
-            logger.debug("Saved assistant message %s", assistant_message_obj.pk)
         except Exception as e:
             logger.error(
                 "Failed to save assistant message for UserProgress %s: %s",
