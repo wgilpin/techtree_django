@@ -9,7 +9,9 @@ lesson_interaction_service.py from the Flask version.
 
 # pylint: disable=no-member
 
+import codecs
 import json
+import re
 import logging
 from typing import Optional, Dict, Any, List, Tuple, TYPE_CHECKING, cast
 
@@ -58,10 +60,10 @@ def _get_llm() -> Optional[ChatGoogleGenerativeAI]:
         # Adjust temperature/top_p as needed for generation tasks
         return ChatGoogleGenerativeAI(
             model=model_name,
-            # google_api_key=api_key, # Use the API key directly from settings
+            google_api_key=api_key,
             temperature=0.7,  # Adjust as needed
             convert_system_message_to_human=True,  # Often needed for Gemini
-        )
+        )  # type: ignore[call-arg]
     except Exception as e:
         logger.error(
             "Failed to initialize ChatGoogleGenerativeAI: %s", e, exc_info=True
@@ -181,7 +183,7 @@ def get_or_create_lesson_content(lesson: Lesson) -> Optional[LessonContent]:
                 logger.warning("LLM returned empty content for lesson %s.", lesson.pk)
                 return None
 
-            logger.info(
+            logger.debug(
                 "LLM call successful for lesson %s. Content length: %d",
                 lesson.pk,
                 len(generated_text),
@@ -204,37 +206,69 @@ def get_or_create_lesson_content(lesson: Lesson) -> Optional[LessonContent]:
                             cleaned_text.removeprefix("```").removesuffix("```").strip()
                         )
 
-                    content_data = json.loads(cleaned_text)
-                    if not isinstance(content_data, dict):
+                    # Escape backslashes that are not part of valid JSON escapes
+                    # This specifically targets single backslashes followed by characters
+                    # --- Use Regex to Extract Exposition Content ---
+                    # Avoids parsing potentially invalid JSON from LLM.
+                    # Assumes "exposition" is the primary key and its value is a string.
+                    # Use non-greedy match and look for comma or closing brace after value.
+                    exposition_match = re.search(
+                        r'"exposition"\s*:\s*"(.*?)"\s*(?:,|\})',  # Refined regex
+                        cleaned_text,
+                        re.DOTALL | re.MULTILINE,
+                    )
+
+                    if exposition_match:
+                        raw_exposition_content = exposition_match.group(1)
+                        # Decode standard JSON escapes (\n, \t, \", \\ etc.) using unicode_escape
+                        try:
+                            unescaped_exposition = codecs.decode(
+                                raw_exposition_content, "unicode_escape"
+                            )
+                        except Exception as decode_err:
+                            logger.warning(
+                                "Failed to unescape extracted content for lesson %s: %s. Using raw extracted content.",
+                                lesson.pk,
+                                decode_err,
+                            )
+                            unescaped_exposition = (
+                                raw_exposition_content  # Fallback to raw
+                            )
+
+                        # Create the dict directly. Django's JSONField will handle serialization.
+                        content_data = {"exposition": unescaped_exposition}
+                        logger.info(
+                            "Successfully extracted and unescaped exposition content via regex for lesson %s.",
+                            lesson.pk,
+                        )
+                    else:
+                        # Fallback if regex fails
                         logger.error(
-                            "LLM generated valid JSON, but it's not a dictionary for lesson %s. Content: %s",
+                            "Failed to extract exposition content using regex for lesson %s. Raw Content: %s",
                             lesson.pk,
                             cleaned_text,
                         )
-                        # Fallback: Store the raw text under 'exposition' if not a dict
                         content_data = {
-                            "exposition": cleaned_text
-                        }  # Use cleaned_text here
+                            "error": "Failed to extract exposition content using regex.",
+                            "raw_response": cleaned_text,
+                        }
                         logger.info(
-                            "Using fallback content structure for lesson %s.", lesson.pk
-                        )
-                    else:
-                        logger.info(
-                            "Successfully parsed LLM JSON response for lesson %s.",
+                            "Storing error structure due to regex extraction failure for lesson %s.",
                             lesson.pk,
                         )
-
-                except json.JSONDecodeError:
+                except Exception as e:  # Add a general except block
                     logger.error(
-                        "Failed to parse LLM JSON response for lesson %s. Storing raw text. Content: %s",
+                        "Error processing LLM response (regex/dict creation) for lesson %s: %s",
                         lesson.pk,
-                        generated_text,
+                        e,
                         exc_info=True,
                     )
-                    # Fallback: Store the raw text under 'exposition' if parsing fails
-                    content_data = {"exposition": cleaned_text}  # Use cleaned_text here
+                    content_data = {
+                        "error": "Failed to process LLM response after generation.",
+                        "raw_response": generated_text,  # Use generated_text as it's guaranteed to exist
+                    }
                     logger.info(
-                        "Using fallback content structure due to JSON parsing error for lesson %s.",
+                        "Storing error structure due to post-generation processing error for lesson %s.",
                         lesson.pk,
                     )
 
@@ -304,7 +338,7 @@ def _initialize_lesson_state(
         "lesson_title": lesson.title,
         "module_title": module.title,  # Correctly access title from module
         # Convert syllabus.pk to string
-        "lesson_uid": f"{str(syllabus.pk)}_{module.module_index}_{lesson.lesson_index}",  
+        "lesson_uid": f"{str(syllabus.pk)}_{module.module_index}_{lesson.lesson_index}",
         "user_id": str(user.pk),  # Store user ID as string
         "lesson_db_id": lesson.pk,  # lesson.pk is likely an int, which is fine
         "content_db_id": str(
@@ -547,7 +581,7 @@ def handle_chat_message(
         else:
             user_message_type = "chat"
 
-        user_message = ConversationHistory.objects.create(
+        ConversationHistory.objects.create(
             progress=progress,
             role="user",
             message_type=user_message_type,
@@ -669,7 +703,6 @@ def handle_chat_message(
         return None  # Indicate failure
 
     # 5. Save assistant response (if any)
-    assistant_message_obj: Optional[ConversationHistory] = None
     if assistant_response_content:
         try:
             # Determine message type for assistant response

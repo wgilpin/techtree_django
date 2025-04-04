@@ -197,24 +197,49 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!response.ok) {
                 return response.json().then(err => { throw new Error(err.error || `HTTP error ${response.status}`); });
             }
-            return response.json();
+            // Check if response body exists before parsing JSON
+            const contentType = response.headers.get("content-type");
+            if (contentType && contentType.indexOf("application/json") !== -1) {
+                return response.json();
+            } else {
+                // Handle non-JSON responses (like unexpected HTML error pages)
+                return response.text().then(text => {
+                    throw new Error(`Received non-JSON response (Status: ${response.status}): ${text.substring(0, 100)}...`);
+                });
+            }
         })
         .then(data => {
+            // Hide loading message regardless of success or failure now
+            if (loadingMessage) loadingMessage.style.display = 'none';
+
             if (data.status === 'success' && data.html_content) {
                 console.log("Content received successfully.");
                 lessonContentArea.innerHTML = data.html_content; // Inject the HTML
-                renderKatex(document.body); // Re-render the whole body
+                renderKatex(lessonContentArea); // Render Katex only within the updated area
             } else {
-                console.error("Failed to load content:", data.error || "Unknown error");
-                lessonContentArea.innerHTML = `<p class="text-danger">Error loading lesson content: ${data.error || 'Please try refreshing.'}</p>`;
+                // Handle specific error status from backend or missing content
+                const errorMessage = data.error || "Content generation failed or returned invalid data.";
+                console.error("Failed to load content:", errorMessage);
+                // Use Bootstrap alert for better visibility
+                lessonContentArea.innerHTML = `
+                    <div class="alert alert-danger" role="alert">
+                        <strong>Error loading lesson content:</strong> ${errorMessage} Please try refreshing the page or contact support if the problem persists.
+                    </div>`;
             }
         })
         .catch(error => {
+            // Hide loading message in case of fetch failure
+            if (loadingMessage) loadingMessage.style.display = 'none';
+
             console.error('Error fetching lesson content:', error);
-            lessonContentArea.innerHTML = `<p class="text-danger">Error loading lesson content: ${error.message}. Please try refreshing.</p>`;
+            // Use Bootstrap alert for better visibility
+            lessonContentArea.innerHTML = `
+                <div class="alert alert-danger" role="alert">
+                    <strong>Error loading lesson content:</strong> ${error.message}. Please try refreshing the page or contact support if the problem persists.
+                </div>`;
         });
     } else {
-         // If content was loaded initially, render KaTeX immediately
+         // If content was loaded initially, render KaTeX immediately for the whole body
          renderKatex(document.body); // Render the whole body initially
     }
 

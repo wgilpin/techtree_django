@@ -82,9 +82,10 @@ def _get_llm(
         logger.info("TechTreeAI: Using %s '%s' for onboarding.", model_key, model_name)
         return ChatGoogleGenerativeAI(
             model=model_name,
+            google_api_key=api_key,
             temperature=temperature,
             convert_system_message_to_human=True,
-        )
+        ) # type: ignore[call-arg]
     except Exception as e:
         logger.error(
             "Failed to initialize ChatGoogleGenerativeAI: %s", e, exc_info=True

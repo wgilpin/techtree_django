@@ -10,6 +10,23 @@
     {# KaTeX CSS for math rendering (v0.16.10) - Integrity check removed #}
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.css">
     {% block extra_css %}{% endblock %}
+    <!-- MathJax Configuration -->
+    <script>
+        MathJax = {
+          tex: {
+            inlineMath: [['$', '$'], ['\\(', '\\)']],
+            displayMath: [['$$', '$$'], ['\\[', '\\]']],
+            processEscapes: true // Allows using \$ for literal dollar signs
+          },
+          svg: {
+            fontCache: 'global' // Improves performance
+          }
+        };
+        </script>
+    <script type="text/javascript" id="MathJax-script" async
+      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js">
+    </script>
+    <!-- End MathJax Configuration -->
 </head>
 <body>
     <div class="app-container">
