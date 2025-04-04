@@ -3,30 +3,22 @@
 # pylint: disable=broad-exception-caught
 
 import json
+import logging  # Use standard logging or Django's
 import re
-import traceback
-import uuid
-from datetime import datetime
-from typing import Any, Dict, List, Optional  # Added List, Any, cast
+from typing import Any, Dict, List, Optional
 
 import google.generativeai as genai
-from requests import RequestException
-from tavily import AsyncTavilyClient  # type: ignore # Changed to Async
-
-import logging  # Use standard logging or Django's
-
-# from backend.logger import logger # Replace with standard/Django logging if needed
 # Project specific imports
-# from backend.services.sqlite_db import SQLiteDatabaseService # Replaced with Django ORM
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ObjectDoesNotExist
-from core.models import Syllabus, Module, Lesson
+from tavily import AsyncTavilyClient  # type: ignore # Changed to Async
+
+from core.models import Lesson, Module, Syllabus
 
 from .prompts import GENERATION_PROMPT_TEMPLATE, UPDATE_PROMPT_TEMPLATE
 from .state import SyllabusState
 from .utils import call_with_retry
 
-# Get logger instance (using standard logging for now)
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
@@ -195,7 +187,6 @@ import asyncio  # Added
 from typing import Any, Dict, List, Optional
 
 from tavily import AsyncTavilyClient  # Changed from TavilyClient
-
 
 from .state import SyllabusState
 

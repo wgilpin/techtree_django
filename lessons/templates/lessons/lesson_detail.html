@@ -55,7 +55,7 @@
                                 <i class="fas fa-robot assistant-icon"></i> {# Assuming Font Awesome is available #}
                             {% endif %}
                             <div class="chat-bubble">
-                                {{ message.content|markdownify|safe }} {# Ensure markdown HTML is rendered #}
+                                {{ message.content|markdownify_chat|safe }} {# Use chat-specific filter #}
                             </div>
                         </div>
                         {% endfor %}
@@ -203,7 +203,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (data.status === 'success' && data.html_content) {
                 console.log("Content received successfully.");
                 lessonContentArea.innerHTML = data.html_content; // Inject the HTML
-                renderKatex(lessonContentArea); // Target KaTeX rendering to the specific area
+                renderKatex(document.body); // Re-render the whole body
             } else {
                 console.error("Failed to load content:", data.error || "Unknown error");
                 lessonContentArea.innerHTML = `<p class="text-danger">Error loading lesson content: ${data.error || 'Please try refreshing.'}</p>`;
@@ -215,7 +215,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     } else {
          // If content was loaded initially, render KaTeX immediately
-         renderKatex(lessonContentArea); // Target KaTeX rendering to the specific area
+         renderKatex(document.body); // Render the whole body initially
     }
 
     // Function to append a message to the chat history with bubble styling
@@ -243,7 +243,7 @@ document.addEventListener('DOMContentLoaded', function() {
         chatHistory.appendChild(messageContainer);
 
         // Render KaTeX within the entire chat history after adding the new bubble
-        renderKatex(chatHistory);
+        renderKatex(document.body); // Re-render the whole body
 
         // Scroll to the bottom
         chatHistory.scrollTop = chatHistory.scrollHeight;

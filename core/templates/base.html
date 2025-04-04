@@ -121,18 +121,8 @@
     {# KaTeX JS for math rendering (v0.16.10) - Integrity check removed #}
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.js"></script>
     {# KaTeX auto-render extension (v0.16.10) - Integrity check removed #}
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/contrib/auto-render.min.js"
-        onload="renderMathInElement(document.body, {
-          // customised options
-          delimiters: [
-              {left: '$$', right: '$$', display: true}, // Display math
-              {left: '\\[', right: '\\]', display: true}, // Display math
-              {left: '$', right: '$', display: false},  // Inline math
-              {left: '\\(', right: '\\)', display: false} // Inline math
-          ],
-          // rendering options
-          throwOnError : false // Don't halt rendering on parse errors
-        });"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/contrib/auto-render.min.js"></script>
+    {# The actual rendering is now triggered by JavaScript in specific templates like lesson_detail.html #}
 
     {% block extra_js %}{% endblock %}
 </body>
