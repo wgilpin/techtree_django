@@ -174,7 +174,7 @@ LOGGING = {
     'loggers': {
         '': { # Root logger
             'handlers': ['console', 'file'],
-            'level': 'DEBUG',
+            'level': 'DEBUG', # Reverted back to DEBUG
             'propagate': True,
         },
         'django': {
@@ -185,6 +185,11 @@ LOGGING = {
         'django.request': {
             'handlers': ['file'],
             'level': 'WARNING',
+            'propagate': False,
+        },
+        'MARKDOWN': { # Changed case to match log output
+            'handlers': ['console', 'file'],
+            'level': 'INFO', # Set level to INFO to ignore DEBUG messages
             'propagate': False,
         },
     },
