@@ -4,6 +4,7 @@
 
 import json  # Move json import up
 import logging
+import re
 from typing import TYPE_CHECKING, Optional
 
 import markdown  # For async view
@@ -102,12 +103,19 @@ def lesson_detail(
                     # Keep exposition_content_value as None to trigger async loading/error display
                 else:
                     # Original logic: get exposition if it exists
-                    exposition_value = lesson_content.content.get(
-                        "exposition"
-                    )  # Get value or None
-                    if (
-                        exposition_value
-                    ):  # Check if exposition_value is not None and not empty string
+                    exposition_value = lesson_content.content.get("exposition") # Get value or None
+                    if exposition_value: # Check if exposition_value is not None and not empty string
+                        # Explicitly fix the specific mangled sequence after JSON loading
+                        # Target exactly \x08egin{ based on user feedback
+                        mangled_sequence = '\x08egin{'      # \x08 is backspace, 'b' is missing
+                        correct_sequence = '\\begin{'       # Literal \begin{
+                        
+                        if mangled_sequence in exposition_value:
+                            logger.warning("Detected mangled '\\begin{' sequence (%r) in exposition from DB for lesson %s.", mangled_sequence, lesson.pk)
+                            logger.debug("String BEFORE replacement: %r", exposition_value) # Log raw string representation
+                            exposition_value = exposition_value.replace(mangled_sequence, correct_sequence)
+                            logger.debug("String AFTER replacement: %r", exposition_value) # Log raw string representation
+                            
                         exposition_content_value = exposition_value
                     else:
                         # Handle case where exposition key exists but value is None or empty string
@@ -132,7 +140,6 @@ def lesson_detail(
                 lesson.pk,
             )
             # exposition_content_value remains None
-
 
         context = {
             "syllabus": syllabus,
@@ -308,7 +315,7 @@ def handle_lesson_interaction(
             "Unexpected error handling interaction for user %s, lesson %s.",
             user.username,
             f"{syllabus_id}:{module_index}:{lesson_index}",
-            exc_info=e
+            exc_info=e,
         )
         error_message = "An unexpected error occurred."
         status_code = 500
@@ -384,16 +391,8 @@ def generate_lesson_content_async(
                     exposition_markdown = raw_exposition_value
 
             if exposition_markdown:
-                # Convert markdown to HTML using the same logic as the template tag
-                html_content = markdown.markdown(
-                    exposition_markdown,
-                    extensions=[
-                        "markdown.extensions.fenced_code",
-                        "markdown.extensions.tables",
-                        "markdown.extensions.nl2br",
-                        # 'markdown.extensions.extra', # Keep disabled for now
-                    ],
-                )
+                # Use the markdownify function from templatetags for consistent processing
+                html_content = markdownify(exposition_markdown)
                 logger.info(
                     "Async content generation successful for lesson %s.", lesson.pk
                 )
@@ -436,7 +435,7 @@ def generate_lesson_content_async(
             syllabus_id,
             module_index,
             lesson_index,
-            exc_info=e
+            exc_info=e,
         )
         return JsonResponse(
             {"status": "error", "error": "An unexpected error occurred."}, status=500

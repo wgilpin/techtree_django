@@ -29,7 +29,7 @@ def pytest_configure(config):
                 f"pytest_configure: Warning - settings.BASE_DIR not found, guessing log path: {log_file_path}"
             )
 
-        root_logger = logging.getLogger()
+        root_logger = logging.getLogger(__name__)
         handler_to_remove = None
 
         # Iterate through a copy of handlers as we might modify the list

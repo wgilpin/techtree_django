@@ -7,12 +7,38 @@ from langchain_core.prompts import PromptTemplate
 # or incorporated directly if simple enough.
 # We also need to adapt the input variables to match Django models.
 
-# Placeholder for LaTeX instructions - define properly later
+# Detailed LaTeX formatting instructions for the AI
 # Use raw string to avoid issues with backslashes in LaTeX examples
 LATEX_FORMATTING_INSTRUCTIONS = r"""
-Use LaTeX for mathematical formulas (e.g., $E=mc^2$) and ensure complex equations
-are properly formatted for display using display math mode (i.e., $$ ... $$).
-Use standard LaTeX commands. Ensure correct syntax.
+Use LaTeX for mathematical formulas with the following guidelines:
+
+1. For inline math, use single dollar signs: $E=mc^2$
+
+2. For display math (equations on their own line), use double dollar signs:
+   $$E = mc^2$$
+
+3. For aligned equations or multi-line equations, use the aligned environment inside display math:
+   $$\begin{aligned}
+   x' &= \gamma(x - vt) \\
+   t' &= \gamma(t - \frac{v}{c^2}x)
+   \end{aligned}$$
+
+4. For matrices, use the matrix, pmatrix, bmatrix, or vmatrix environments:
+   $$\begin{pmatrix} a & b \\ c & d \end{pmatrix}$$
+
+5. Ensure all LaTeX commands are properly escaped with backslashes, e.g., \gamma, \frac{}{}, \sqrt{}, etc.
+
+6. For fractions, use \frac{numerator}{denominator}
+
+7. For Greek letters, use \alpha, \beta, \gamma, etc.
+
+8. For subscripts and superscripts, use _ and ^ respectively: $E_0$ or $m^2$
+
+9. For multi-character subscripts or superscripts, use curly braces: $x_{initial}$ or $e^{i\pi}$
+
+10. For special functions, use \sin, \cos, \log, etc.
+
+Always ensure proper nesting of environments and correct syntax.
 """
 
 # TODO: Refine this prompt based on actual model needs and available context

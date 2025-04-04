@@ -98,25 +98,13 @@
 <script>
 // Function to render KaTeX math
 // Function to render KaTeX math within a specific element or the whole body
-// Function to render KaTeX math within a specific element or the whole body
-function renderKatex(targetElement = document.body) { // Default to document.body
-    if (typeof renderMathInElement === 'function') {
-        // Use the standard delimiters KaTeX auto-render expects,
-        // Now that arithmatex is removed, only look for original $ and $$ delimiters
-        renderMathInElement(targetElement, {
-             delimiters: [
-                 {left: '$$', right: '$$', display: true},   // Keep as fallback
-                 {left: '\\[', right: '\\]', display: true}, // Primary display math delimiter from arithmatex generic=True
-                 {left: '$', right: '$', display: false},    // Keep as fallback
-                 {left: '\\(', right: '\\)', display: false} // Primary inline math delimiter from arithmatex generic=True
-             ],
-            throwOnError: false
-        });
-        // Adjust log message based on target
-        const targetDesc = targetElement === document.body ? 'document body' : targetElement.id || targetElement.tagName;
-        console.log(`KaTeX auto-rendering triggered for ${targetDesc}.`);
+function renderMath(targetElement = document.body) { // Default to document.body
+    if (typeof MathJax !== 'undefined') {
+        console.log("Using MathJax to render LaTeX in", targetElement);
+        // Let MathJax handle the content directly
+        MathJax.typeset([targetElement]);
     } else {
-        console.warn("KaTeX renderMathInElement function not found.");
+        console.warn("MathJax not found");
     }
 }
 
@@ -239,8 +227,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 </div>`;
         });
     } else {
-         // If content was loaded initially, render KaTeX immediately for the whole body
-         renderKatex(document.body); // Render the whole body initially
+         // If content was loaded initially, render math immediately for the whole body
+         renderMath(document.body); // Render the whole body initially
     }
 
     // Function to append a message to the chat history with bubble styling
@@ -267,8 +255,8 @@ document.addEventListener('DOMContentLoaded', function() {
         messageContainer.appendChild(bubbleDiv);
         chatHistory.appendChild(messageContainer);
 
-        // Render KaTeX within the entire chat history after adding the new bubble
-        renderKatex(document.body); // Re-render the whole body
+        // Render math within the entire chat history after adding the new bubble
+        renderMath(document.body); // Re-render the whole body
 
         // Scroll to the bottom
         chatHistory.scrollTop = chatHistory.scrollHeight;
