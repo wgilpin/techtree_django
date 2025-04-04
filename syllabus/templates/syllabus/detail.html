@@ -43,7 +43,7 @@
                                     </div>
                                     {# Link uses module.module_index and lesson.lesson_index from context #}
                                     {# Assuming the target URL name is 'syllabus:lesson_detail' #}
-                                    <a href="{% url 'syllabus:lesson_detail' syllabus_id=syllabus.syllabus_id module_index=module.module_index lesson_index=lesson.lesson_index %}" class="lesson-button">
+                                    <a href="{% url 'lessons:lesson_detail' syllabus_id=syllabus.syllabus_id module_index=module.module_index lesson_index=lesson.lesson_index %}" class="lesson-button">
                                         View Lesson {# Changed text from Start Lesson #}
                                     </a>
                                 </div>

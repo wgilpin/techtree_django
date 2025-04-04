@@ -1,4 +1,5 @@
 """Prompt templates for the lessons AI components."""
+# pylint: disable=line-too-long
 
 from langchain_core.prompts import PromptTemplate
 

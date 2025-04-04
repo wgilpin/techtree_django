@@ -15,7 +15,6 @@ def _route_message_logic(state: LessonState) -> str:
     """Determines the next node based on the current interaction mode."""
     # Use the mode set by classify_intent node
     mode = state.get("current_interaction_mode", "chatting")
-    logger.debug("Routing based on mode: %s", mode)
     if mode == "request_exercise":
         return "generate_new_exercise"
     if mode == "request_assessment":
@@ -84,7 +83,6 @@ class LessonInteractionGraph:
         if not self.graph:
             raise RuntimeError("Graph not compiled.")
 
-        logger.debug("Processing chat turn. Initial state keys: %s", current_state.keys())
 
         # Prepare input state for the graph, adding history context
         # The graph nodes expect 'history_context'
@@ -99,7 +97,6 @@ class LessonInteractionGraph:
         try:
              # Use invoke for simpler final state retrieval
             final_state_updates = self.graph.invoke(input_state_dict, {"recursion_limit": 10})
-            logger.debug("Graph invocation complete. State updates: %s", final_state_updates.keys())
 
         except Exception as e:
             logger.error("Error during graph execution in process_chat_turn: %s", e, exc_info=True)
