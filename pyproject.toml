@@ -69,4 +69,16 @@ python_files = "tests.py test_*.py *_tests.py" # Standard Django test discovery 
 env = [
     "DJANGO_ALLOW_ASYNC_UNSAFE=1",
 ]
+addopts = "--show-capture=no"
+
+
+
+
+
+
+
+
+
+
+
 

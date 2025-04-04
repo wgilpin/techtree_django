@@ -14,6 +14,7 @@ from pathlib import Path
 
 import environ  # Import environ
 
+
 # Initialize environ
 env = environ.Env(
     # set casting, default value
@@ -44,16 +45,19 @@ ALLOWED_HOSTS: list[str] = []
 # Application definition
 
 INSTALLED_APPS = [
+    # Local apps first to override templates
+    "core.apps.CoreConfig",
+    "onboarding.apps.OnboardingConfig",
+    "syllabus.apps.SyllabusConfig",
+    "lessons.apps.LessonsConfig",
+
+    # Django contrib apps
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "core.apps.CoreConfig", # Added core app
-    "onboarding.apps.OnboardingConfig", # Added onboarding app
-    "syllabus.apps.SyllabusConfig", # Added syllabus app
-    "lessons.apps.LessonsConfig", # Added lessons app
 ]
 
 MIDDLEWARE = [
@@ -185,6 +189,7 @@ LOGGING = {
         },
     },
 }
+
 
 # Onboarding Assessment Settings
 ONBOARDING_DEFAULT_DIFFICULTY = 3 # Example: Scale 1-5

@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+
+{% block title %}Logged Out - TechTree{% endblock %}
+
+{% block content %}
+<div class="container" style="text-align: center; padding: 2rem;">
+    <h2>You have been logged out.</h2>
+    <p>Thank you for using TechTree!</p>
+    <a href="{% url 'login' %}" class="primary-button" style="display: block; width: fit-content; margin: 1rem auto 0 auto;">Log In Again</a> {# Center using block display and auto margins #}
+</div>
+{% endblock %}

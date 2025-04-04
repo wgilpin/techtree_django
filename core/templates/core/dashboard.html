@@ -46,12 +46,9 @@
                                 <span class="stat-label">Total Lessons</span>
                             </div>
                         </div>
-                        {# Placeholder URL name - needs definition in urls.py and view logic #}
-                        {# Pass primary key or relevant identifiers #}
-                        <a href="#" class="course-button">Continue Learning</a>
-                        {# Example if using syllabus ID (no namespace):
-                           <a href="{% url 'syllabus_detail' syllabus_id=course.syllabus_id %}" class="course-button">Continue Learning</a>
-                        #}
+                        {# Link to the syllabus detail view using the correct namespace and name #}
+                        <a href="{% url 'syllabus:detail' syllabus_id=course.syllabus_id %}" class="course-button">Continue Learning</a>
+                        {# Comment block containing non-namespaced example fully removed #}
                     </div>
                 {% endfor %}
             </div>

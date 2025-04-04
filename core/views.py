@@ -5,8 +5,8 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib import messages
 from django.urls import reverse
-from django.db.models import Count, Q # Import Q for complex lookups if needed
-from .models import Syllabus, UserProgress # Import Syllabus and UserProgress
+from django.db.models import Count, Q, F, Value, FloatField, Case, When # Import ORM tools
+from .models import Syllabus, UserProgress, Lesson # Import models
 
 def index(request):
     """
@@ -27,25 +27,38 @@ def dashboard(request):
     Fetches user's syllabi (courses) and progress stats.
     """
     user = request.user
-    # Fetch syllabi associated with the current user
-    user_courses = Syllabus.objects.filter(user=user).order_by('created_at') # pylint: disable=no-member
+    # Fetch syllabi associated with the current user and annotate with progress
+    user_courses = Syllabus.objects.filter(user=user).annotate( # type: ignore[misc]
+        total_lessons=Count('modules__lessons', distinct=True),
+        completed_lessons=Count(
+            'userprogress',
+            filter=Q(userprogress__user=user, userprogress__status='completed'),
+            distinct=True
+        )
+    ).annotate(
+        progress_percentage=Case(
+            When(total_lessons=0, then=Value(0.0)), # Handle division by zero
+            default=(F('completed_lessons') * 100.0 / F('total_lessons')),
+            output_field=FloatField()
+        )
+    ).order_by('created_at')
 
-    # Calculate progress statistics
-    progress_records = UserProgress.objects.filter(user=user) # pylint: disable=no-member
-    total_lessons_tracked = progress_records.count()
-    total_completed_lessons = progress_records.filter(status='completed').count()
+    # Calculate overall aggregate statistics (can differ from sum of annotated values)
+    progress_records = UserProgress.objects.filter(user=user) # type: ignore[misc]
+    total_lessons_tracked_agg = progress_records.count()
+    total_completed_lessons_agg = progress_records.filter(status='completed').count()
 
-    # Calculate average progress
+    # Calculate average progress based on all tracked progress records
     average_progress = 0
-    if total_lessons_tracked > 0:
-        average_progress = round((total_completed_lessons / total_lessons_tracked) * 100)
+    if total_lessons_tracked_agg > 0:
+        average_progress = round((total_completed_lessons_agg / total_lessons_tracked_agg) * 100)
 
     # Add data to the context
     context = {
-        'courses': user_courses,
-        'total_completed_lessons': total_completed_lessons,
-        'average_progress': average_progress,
-        'total_lessons_tracked': total_lessons_tracked, # Optional: might be useful
+        'courses': user_courses, # Annotated courses list
+        'total_completed_lessons': total_completed_lessons_agg, # Overall completed
+        'average_progress': average_progress, # Overall average
+        'total_lessons_tracked': total_lessons_tracked_agg, # Overall tracked
     }
     return render(request, 'core/dashboard.html', context)
 

@@ -18,8 +18,8 @@ from .ai.state import SyllabusState
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    # Use string literal for User type hint
-    pass
+    # Import User model for type hinting
+    from django.contrib.auth import models as auth_models
 
 
 class SyllabusService:
@@ -75,11 +75,144 @@ class SyllabusService:
             "modules": modules_list,
         }
 
+    # --- Synchronous Counterparts for Sync Views ---
+
+    def _format_syllabus_dict_sync(self, syllabus_obj: Syllabus) -> Dict[str, Any]:
+        """Formats a Syllabus ORM object into a dictionary structure synchronously."""
+        modules_list_sync = []
+        # Access related managers synchronously
+        # Prefetching should be done in the calling query if needed
+        for module in syllabus_obj.modules.order_by("module_index").all(): # type: ignore[attr-defined]
+            lessons_list_sync = [
+                {
+                    "title": lesson.title, "summary": lesson.summary, "duration": lesson.duration,
+                    "lesson_index": lesson.lesson_index, "id": lesson.id,
+                }
+                for lesson in module.lessons.order_by("lesson_index").all()
+            ]
+            modules_list_sync.append({
+                "title": module.title, "summary": module.summary, "lessons": lessons_list_sync,
+                "module_index": module.module_index, "id": module.id,
+            })
+
+        user_id_val = None
+        if syllabus_obj.user:
+            user_id_val = str(syllabus_obj.user_id)
+
+        return {
+            "syllabus_id": str(syllabus_obj.syllabus_id),
+            "topic": syllabus_obj.topic,
+            "level": syllabus_obj.level,
+            "user_entered_topic": syllabus_obj.user_entered_topic,
+            "user_id": user_id_val,
+            "created_at": syllabus_obj.created_at.isoformat() if syllabus_obj.created_at else None,
+            "updated_at": syllabus_obj.updated_at.isoformat() if syllabus_obj.updated_at else None,
+            "modules": modules_list_sync,
+        }
+
+    def get_syllabus_by_id_sync(self, syllabus_id: str) -> Dict[str, Any]:
+        """
+        Retrieves a specific syllabus by its primary key (UUID) synchronously.
+        """
+        logger.info(f"Retrieving syllabus by ID (sync): {syllabus_id}")
+        try:
+            # Use prefetch_related for efficiency
+            syllabus_obj = Syllabus.objects.prefetch_related(
+                "modules__lessons"
+            ).select_related("user").get(
+                pk=syllabus_id
+            )
+            return self._format_syllabus_dict_sync(syllabus_obj)
+        except Syllabus.DoesNotExist as exc:
+            logger.warning(f"Syllabus with ID {syllabus_id} not found (sync).")
+            raise NotFoundError(f"Syllabus with ID {syllabus_id} not found.") from exc
+        except Exception as e:
+            logger.exception(f"Error retrieving syllabus ID {syllabus_id} (sync): {e}")
+            raise ApplicationError(f"Error retrieving syllabus: {e}") from e
+
+    def get_module_details_sync(self, syllabus_id: str, module_index: int) -> Dict[str, Any]:
+        """
+        Retrieves details for a specific module within a syllabus synchronously.
+        """
+        logger.info(
+            f"Retrieving module details (sync): Syllabus ID={syllabus_id}, Module Index={module_index}"
+        )
+        try:
+            module_obj: Module = Module.objects.select_related(
+                "syllabus"
+            ).prefetch_related(
+                "lessons"
+            ).get(
+                syllabus_id=syllabus_id, module_index=module_index
+            )
+
+            lessons_list = [
+                {
+                    "title": lesson.title, "summary": lesson.summary, "duration": lesson.duration,
+                    "lesson_index": lesson.lesson_index, "id": lesson.id,
+                }
+                for lesson in module_obj.lessons.order_by("lesson_index").all()
+            ]
+
+            return {
+                "id": module_obj.id, # type: ignore[attr-defined]
+                "syllabus_id": str(module_obj.syllabus.syllabus_id), # type: ignore[attr-defined]
+                "module_index": module_obj.module_index,
+                "title": module_obj.title,
+                "summary": module_obj.summary,
+                "lessons": lessons_list,
+                "created_at": module_obj.created_at.isoformat() if module_obj.created_at else None,
+                "updated_at": module_obj.updated_at.isoformat() if module_obj.updated_at else None,
+            }
+        except Module.DoesNotExist as exc:
+            logger.warning(f"Module not found (sync): Syllabus ID={syllabus_id}, Index={module_index}")
+            raise NotFoundError(f"Module {module_index} not found in syllabus {syllabus_id}.") from exc
+        except Exception as e:
+            logger.exception(f"Error retrieving module details (sync): {e}")
+            raise ApplicationError(f"Error retrieving module details: {e}") from e
+
+    def get_lesson_details_sync(
+        self, syllabus_id: str, module_index: int, lesson_index: int
+    ) -> Dict[str, Any]:
+        """
+        Retrieves details for a specific lesson within a syllabus module synchronously.
+        """
+        logger.info(
+            f"Retrieving lesson details (sync): Syllabus ID={syllabus_id}, Module Index={module_index}, Lesson Index={lesson_index}"
+        )
+        try:
+            lesson_obj: Lesson = Lesson.objects.select_related(
+                "module__syllabus"
+            ).get(
+                module__syllabus_id=syllabus_id,
+                module__module_index=module_index,
+                lesson_index=lesson_index,
+            )
+            return {
+                "id": lesson_obj.id, # type: ignore[attr-defined]
+                "module_id": lesson_obj.module.id, # type: ignore[attr-defined]
+                "syllabus_id": str(lesson_obj.module.syllabus.syllabus_id), # type: ignore[attr-defined]
+                "lesson_index": lesson_obj.lesson_index,
+                "title": lesson_obj.title,
+                "summary": lesson_obj.summary,
+                "duration": lesson_obj.duration,
+                "created_at": lesson_obj.created_at.isoformat() if lesson_obj.created_at else None,
+                "updated_at": lesson_obj.updated_at.isoformat() if lesson_obj.updated_at else None,
+            }
+        except Lesson.DoesNotExist as exc:
+            logger.warning(f"Lesson not found (sync): Syllabus ID={syllabus_id}, Module={module_index}, Lesson={lesson_index}")
+            raise NotFoundError(f"Lesson {lesson_index} not found in module {module_index}, syllabus {syllabus_id}.") from exc
+        except Exception as e:
+            logger.exception(f"Error retrieving lesson details (sync): {e}")
+            raise ApplicationError(f"Error retrieving lesson details: {e}") from e
+
+    # --- Async Methods ---
+
     async def get_or_generate_syllabus(
         self,
         topic: str,
         level: str,
-        user: Optional[settings.AUTH_USER_MODEL], # Use string literal
+        user: Optional["auth_models.User"], # Use imported models alias
     ) -> Dict[str, Any]:
         """
         Retrieves a syllabus by topic, level, and user, generating one via AI if it doesn't exist.

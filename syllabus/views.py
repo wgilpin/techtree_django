@@ -2,6 +2,8 @@
 
 import logging
 from typing import Any, Dict
+# Removed sync_to_async import
+# Removed sync_to_async import
 
 from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse, Http404
@@ -31,8 +33,10 @@ def syllabus_landing(request: HttpRequest) -> HttpResponse:
 
 
 # Removed @login_required decorator
+# Keep this view async as it calls an async service
 async def generate_syllabus_view(request: HttpRequest) -> HttpResponse:
-    if not request.user.is_authenticated:
+    user = await request.auser() # Use async user fetch
+    if not user.is_authenticated:
         # Handle redirect for POST request appropriately, maybe return error or redirect GET
         # For simplicity, redirecting GET part of login flow
         return redirect(f"{reverse('login')}?next={reverse('syllabus:landing')}") # Redirect to landing after login
@@ -40,7 +44,7 @@ async def generate_syllabus_view(request: HttpRequest) -> HttpResponse:
     if request.method == "POST":
         topic = request.POST.get("topic", "").strip()
         level = request.POST.get("level", "beginner").strip()
-        user = request.user
+        # user is fetched asynchronously above
 
         if not topic:
             # Handle error: topic is required
@@ -50,8 +54,9 @@ async def generate_syllabus_view(request: HttpRequest) -> HttpResponse:
             return redirect(reverse("syllabus:landing")) # Or render form with error
 
         try:
+            # Use the user object fetched with await request.auser()
             logger.info(f"Generating syllabus for user {user.pk}: Topic='{topic}', Level='{level}'")
-            # Await the async service call
+            # Call the async service method
             syllabus_data = await syllabus_service.get_or_generate_syllabus(
                 topic=topic, level=level, user=user
             )
@@ -80,19 +85,21 @@ async def generate_syllabus_view(request: HttpRequest) -> HttpResponse:
     return redirect(reverse("syllabus:landing"))
 
 
-# Removed @login_required decorator
-async def syllabus_detail(request: HttpRequest, syllabus_id: str) -> HttpResponse:
+# Changed back to sync def
+def syllabus_detail(request: HttpRequest, syllabus_id: str) -> HttpResponse:
+    """Displays the details of a specific syllabus."""
+    # Use sync user check
     if not request.user.is_authenticated:
         return redirect(f"{reverse('login')}?next={request.path}")
-    """Displays the details of a specific syllabus."""
     try:
-        # Await the async service call
-        syllabus_data = await syllabus_service.get_syllabus_by_id(syllabus_id)
+        # Call the sync service method
+        syllabus_data = syllabus_service.get_syllabus_by_id_sync(syllabus_id)
         # Ensure the user has access to this syllabus (optional, depends on requirements)
         # if syllabus_data.get("user_id") != str(request.user.pk) and syllabus_data.get("user_id") is not None:
         #     raise Http404("Syllabus not found or access denied.")
 
         context = {"syllabus": syllabus_data}
+        # Use standard render
         return render(request, "syllabus/detail.html", context)
     except NotFoundError:
         raise Http404("Syllabus not found.")
@@ -102,17 +109,19 @@ async def syllabus_detail(request: HttpRequest, syllabus_id: str) -> HttpRespons
         return redirect(reverse("syllabus:landing")) # Or render an error page
 
 
-# Removed @login_required decorator
-async def module_detail(request: HttpRequest, syllabus_id: str, module_index: int) -> HttpResponse:
+# Changed back to sync def
+def module_detail(request: HttpRequest, syllabus_id: str, module_index: int) -> HttpResponse:
+    # Use sync user check
     if not request.user.is_authenticated:
         return redirect(f"{reverse('login')}?next={request.path}")
     """Displays the details of a specific module."""
     try:
-        # Await the async service call
-        module_data = await syllabus_service.get_module_details(syllabus_id, module_index)
+        # Call the sync service method
+        module_data = syllabus_service.get_module_details_sync(syllabus_id, module_index)
         # Add access control if necessary
 
         context = {"module": module_data, "syllabus_id": syllabus_id}
+        # Use standard render
         return render(request, "syllabus/module_detail.html", context)
     except NotFoundError:
         raise Http404("Module not found.")
@@ -121,14 +130,15 @@ async def module_detail(request: HttpRequest, syllabus_id: str, module_index: in
         return redirect(reverse("syllabus:detail", args=[syllabus_id])) # Redirect to syllabus
 
 
-# Removed @login_required decorator
-async def lesson_detail(request: HttpRequest, syllabus_id: str, module_index: int, lesson_index: int) -> HttpResponse:
+# Changed back to sync def
+def lesson_detail(request: HttpRequest, syllabus_id: str, module_index: int, lesson_index: int) -> HttpResponse:
+    # Use sync user check
     if not request.user.is_authenticated:
         return redirect(f"{reverse('login')}?next={request.path}")
     """Displays the details of a specific lesson."""
     try:
-        # Await the async service call
-        lesson_data = await syllabus_service.get_lesson_details(syllabus_id, module_index, lesson_index)
+        # Call the sync service method
+        lesson_data = syllabus_service.get_lesson_details_sync(syllabus_id, module_index, lesson_index)
         # Add access control if necessary
 
         context = {
@@ -136,6 +146,7 @@ async def lesson_detail(request: HttpRequest, syllabus_id: str, module_index: in
             "syllabus_id": syllabus_id,
             "module_index": module_index,
         }
+        # Use standard render
         return render(request, "syllabus/lesson_detail.html", context)
     except NotFoundError:
         raise Http404("Lesson not found.")
