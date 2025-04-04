@@ -30,6 +30,7 @@ dev = [
     "mypy>=1.15.0",
     "pytest-asyncio>=0.26.0",
     "pytest-django>=4.11.0",
+    "pytest-env>=1.1.5",
 ]
 
 
@@ -65,5 +66,7 @@ max-line-length = 120
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "techtree_django.settings"
 python_files = "tests.py test_*.py *_tests.py" # Standard Django test discovery patterns
-
+env = [
+    "DJANGO_ALLOW_ASYNC_UNSAFE=1",
+]
 

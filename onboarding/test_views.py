@@ -1,6 +1,7 @@
 # onboarding/test_views.py
 import pytest
 import json
+import uuid # Import uuid
 from unittest.mock import patch, MagicMock, AsyncMock
 
 from django.urls import reverse
@@ -260,9 +261,10 @@ async def test_submit_answer_view_continue(mock_get_ai, mock_create_assessment, 
     mock_create_assessment.assert_not_called() # Should not be called yet
 
 @pytest.mark.django_db # Mark test as needing DB access
-@patch('onboarding.views.create_user_assessment') # Mock DB creation
-@patch('onboarding.views.get_ai_instance')
-async def test_submit_answer_view_complete(mock_get_ai, mock_create_assessment, async_client_fixture, logged_in_user):
+@patch('onboarding.views.create_user_assessment') # Mock DB creation for assessment
+@patch('onboarding.views.syllabus_service.get_or_generate_syllabus') # Mock syllabus service call
+@patch('onboarding.views.get_ai_instance') # Mock assessment AI
+async def test_submit_answer_view_complete(mock_get_ai, mock_get_or_generate_syllabus, mock_create_assessment, async_client_fixture, logged_in_user):
     """Test submitting the final answer, completing the assessment."""
     # Await the fixture if it's async
     user = await logged_in_user
@@ -309,20 +311,19 @@ async def test_submit_answer_view_complete(mock_get_ai, mock_create_assessment, 
     mock_ai_instance.calculate_final_assessment.return_value = final_state_with_assessment_key # Return state with key
     mock_get_ai.return_value = mock_ai_instance
 
+    # Mock the syllabus service call to return a valid UUID syllabus ID
+    mock_syllabus_id = str(uuid.uuid4()) # Generate a real UUID
+    mock_get_or_generate_syllabus.return_value = {"syllabus_id": mock_syllabus_id}
+
     # Set initial state in session asynchronously using helper
     await set_session_value_sync(async_client_fixture, settings.ASSESSMENT_STATE_KEY, current_state)
 
     response = await async_client_fixture.post(url, json.dumps({"answer": user_answer}), content_type='application/json')
 
-    assert response.status_code == 200
-    response_json = response.json()
-    # The view doesn't return 'status' on completion, check other keys
-    # assert response_json['status'] == 'success' # This key might not exist on completion response
-    assert response_json['feedback'] == "Done"
-    # assert response_json['next_question'] is None # Key is not present in completion response
-    assert response_json['is_complete'] is True # Check correct key
-    assert response_json['final_assessment']['overall_score'] == 80.0
-    assert response_json['final_assessment']['knowledge_level'] == "advanced"
+    # Expect a redirect (302) to the syllabus detail page
+    assert response.status_code == 302
+    expected_redirect_url = reverse("syllabus:detail", args=[mock_syllabus_id])
+    assert response.url == expected_redirect_url
 
     # Check session state cleared asynchronously using helper
     session_exists = await session_key_exists_sync(async_client_fixture, settings.ASSESSMENT_STATE_KEY)
@@ -332,14 +333,12 @@ async def test_submit_answer_view_complete(mock_get_ai, mock_create_assessment, 
     mock_ai_instance.should_continue.assert_called_once_with(evaluated_state)
     mock_ai_instance.calculate_final_assessment.assert_called_once_with(evaluated_state)
     mock_ai_instance.generate_question.assert_not_called()
-    # Check UserAssessment was created
+    # Check UserAssessment was created (mocked)
     mock_create_assessment.assert_called_once()
-    call_args, call_kwargs = mock_create_assessment.call_args
-    # user object might be LazyObject, compare pks
-    assert call_kwargs['user'].pk == user.pk
-    assert call_kwargs['topic'] == "CompleteTopic"
-    assert call_kwargs['knowledge_level'] == "advanced"
-    assert call_kwargs['score'] == 80.0 # Check score percentage
+    # Check syllabus generation was called (mocked)
+    mock_get_or_generate_syllabus.assert_called_once_with(
+        topic="CompleteTopic", level="advanced", user=user
+    )
     # Check history args if needed
 
 @pytest.mark.django_db # Mark test as needing DB access

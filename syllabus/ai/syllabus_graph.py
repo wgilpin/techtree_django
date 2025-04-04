@@ -135,7 +135,7 @@ class SyllabusAI:
             "user_id": user_id,
         }
 
-    def get_or_create_syllabus(self) -> SyllabusState:
+    async def get_or_create_syllabus(self) -> SyllabusState: # Make async
         """Retrieves an existing syllabus or orchestrates the creation of a new one."""
         if not self.state:
             raise ValueError("Agent not initialized. Call initialize() first.")
@@ -147,7 +147,8 @@ class SyllabusAI:
         final_state_updates = {}
         try:
             # Stream the execution, starting with the current state
-            for step in self.graph.stream(self.state, config={"recursion_limit": 10}):
+            # Use astream for async execution
+            async for step in self.graph.astream(self.state, config={"recursion_limit": 10}): # Use astream
                 node_name = list(step.keys())[0]
                 print(f"Graph Step: {node_name}")
                 # Accumulate all updates from the steps

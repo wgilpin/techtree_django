@@ -3,7 +3,9 @@
 # mypy: disable-error-code="attr-defined"
 
 from django.contrib import admin
-from .models import ConversationHistory
+from .models import (
+    ConversationHistory, UserProgress, Syllabus, Module, Lesson, LessonContent, UserAssessment
+)
 
 class ConversationHistoryAdmin(admin.ModelAdmin):
     """Admin configuration for the ConversationHistory model."""
@@ -36,9 +38,9 @@ admin.site.register(ConversationHistory, ConversationHistoryAdmin)
 
 # Also register other relevant core models if not done elsewhere
 # Consider registering these if they aren't registered in their respective app's admin.py
-# admin.site.register(UserProgress)
-# admin.site.register(Syllabus)
-# admin.site.register(Module) # Assuming Module is in core.models
-# admin.site.register(Lesson) # Assuming Lesson is in core.models
-# admin.site.register(LessonContent) # Assuming LessonContent is in core.models
-# admin.site.register(UserAssessment) # Assuming UserAssessment is in core.models
+admin.site.register(UserProgress)
+admin.site.register(Syllabus)
+admin.site.register(Module)
+admin.site.register(Lesson)
+admin.site.register(LessonContent)
+admin.site.register(UserAssessment)

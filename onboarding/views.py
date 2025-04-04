@@ -5,10 +5,11 @@ from typing import Optional, cast
 import json # Import json module
 
 from asgiref.sync import sync_to_async
-from django.conf import settings # Import settings
+from django.conf import settings
+from django.contrib import messages # Add messages framework
 from django.http import (HttpRequest, HttpResponse, HttpResponseBadRequest,
                          JsonResponse)
-from django.shortcuts import render
+from django.shortcuts import render, redirect # Add redirect
 from django.urls import NoReverseMatch, reverse
 from django.views.decorators.http import require_GET, require_POST
 
@@ -16,7 +17,11 @@ from django.views.decorators.http import require_GET, require_POST
 from core.models import UserAssessment
 
 # Import AI logic and state definition
-from .ai import AgentState, TechTreeAI # Removed MEDIUM import
+from .ai import AgentState, TechTreeAI
+
+# Import Syllabus Service and Exceptions
+from syllabus.services import SyllabusService
+from core.exceptions import ApplicationError
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +63,12 @@ def create_user_assessment(**kwargs):
 # --- Helper to get/initialize AI instance ---
 def get_ai_instance() -> TechTreeAI:
     """Instantiates the AI logic class."""
-    # TODO: Implement caching/singleton if needed
+    # Instantiate services (consider dependency injection later)
+    # Assuming TechTreeAI is the assessment AI
+    # TODO: Review if these should be instantiated per request or globally
     return TechTreeAI()
+
+syllabus_service = SyllabusService()
 
 
 # --- Assessment Views ---
@@ -127,7 +136,7 @@ async def start_assessment_view(request: HttpRequest, topic: str) -> JsonRespons
 
 
 @require_POST
-async def submit_answer_view(request: HttpRequest) -> JsonResponse:
+async def submit_answer_view(request: HttpRequest) -> HttpResponse: # Change return type hint
     """Process a user's submitted answer during an assessment. (Async)"""
     logger.info("Async submit answer view called.")
 
@@ -229,37 +238,30 @@ async def submit_answer_view(request: HttpRequest) -> JsonResponse:
                 "feedback": assessment_state.get("feedback") or "",
             }
             return JsonResponse(response_data)
-        else:
-            # calculate_final_assessment returns the full state with results nested
-            # Pass a copy of the state to calculate_final_assessment
+        else: # Assessment is complete
+            # Calculate final assessment results
             final_state = ai_instance.calculate_final_assessment(assessment_state.copy())
             final_assessment_data = final_state.get("final_assessment", {})
-
-            # Update the main assessment_state with final results for saving/response
-            assessment_state["knowledge_level"] = final_assessment_data.get(
-                "knowledge_level", "Unknown"
-            )
-            assessment_state["score"] = final_assessment_data.get("overall_score") # Use correct key
-            assessment_state["is_complete"] = final_state.get("is_complete", True) # Use flag from final_state
-            # Store the nested final assessment data as well
+            assessment_state["knowledge_level"] = final_assessment_data.get("knowledge_level", "Unknown")
+            assessment_state["score"] = final_assessment_data.get("overall_score")
+            assessment_state["is_complete"] = final_state.get("is_complete", True)
             assessment_state["final_assessment"] = final_assessment_data
 
             logger.info(
                 f"Assessment complete. Level: {assessment_state['knowledge_level']}, Score: {assessment_state['score']}"
             )
 
-            user = await request.auser()  # Get user asynchronously
+            user = await request.auser()
             user_id = assessment_state.get("user_id")
 
+            # Attempt to save the assessment result (optional, proceed even if fails)
             if user_id and user.is_authenticated and user.pk == user_id:
                 logger.info(f"Attempting to save assessment for user ID: {user_id}")
                 try:
-                    await create_user_assessment(  # Use async wrapper
-                        user=user,  # Pass user object
+                    await create_user_assessment(
+                        user=user,
                         topic=assessment_state.get("topic", "Unknown Topic"),
-                        knowledge_level=assessment_state.get(
-                            "knowledge_level", "Unknown"
-                        ),
+                        knowledge_level=assessment_state.get("knowledge_level", "Unknown"),
                         score=assessment_state.get("score", 0.0),
                         question_history=assessment_state.get("questions_asked", []),
                         response_history=assessment_state.get("answers", []),
@@ -268,29 +270,61 @@ async def submit_answer_view(request: HttpRequest) -> JsonResponse:
                 except Exception as db_err:
                     logger.error(f"Failed to save assessment: {db_err}", exc_info=True)
             else:
-                logger.warning(
+                 logger.warning(
                     "Assessment completed but not saved. User ID mismatch or missing. "
                     f"Session User ID: {user_id}, Request User PK: {user.pk if user.is_authenticated else None}"
                 )
 
-            # Construct the final response including the nested final_assessment
-            final_response = {
-                "is_complete": True,
-                "knowledge_level": assessment_state["knowledge_level"],
-                "score": assessment_state["score"],
-                # Explicitly handle None feedback
-                "feedback": assessment_state.get("feedback") or "",
-                "final_assessment": assessment_state.get("final_assessment") # Include nested data
-            }
+            # --- NEW: Trigger Syllabus Generation ---
+            topic = assessment_state.get("topic")
+            level = assessment_state.get("knowledge_level")
 
-            # Clear state from session asynchronously
+            # Clear assessment state from session *before* potentially long syllabus generation
             await del_session_key(request.session, "assessment_state")
             logger.info("Assessment state cleared from session.")
 
-            return JsonResponse(final_response)
+            if not topic or not level:
+                 logger.error("Cannot generate syllabus: Topic or Level missing from final assessment state.")
+                 messages.error(request, "Assessment complete, but failed to determine topic or level for syllabus generation.")
+                 return redirect(reverse('dashboard')) # Redirect to dashboard on error
+
+            if not user.is_authenticated:
+                 logger.error("Cannot generate syllabus: User is not authenticated.")
+                 messages.error(request, "Assessment complete, but you must be logged in to generate a syllabus.")
+                 return redirect(reverse('login')) # Redirect to login
+
+            try:
+                logger.info(f"Requesting syllabus generation for user {user.pk}: Topic='{topic}', Level='{level}'")
+                # Call the async service method directly
+                syllabus_data = await syllabus_service.get_or_generate_syllabus(
+                    topic=topic, level=level, user=user
+                )
+                syllabus_id = syllabus_data.get("syllabus_id")
+
+                if syllabus_id:
+                    logger.info(f"Syllabus generated/found (ID: {syllabus_id}). Redirecting to detail page.")
+                    messages.success(request, f"Assessment complete! Your syllabus for '{topic}' ({level}) is ready.")
+                    return redirect(reverse("syllabus:detail", args=[syllabus_id]))
+                else:
+                    logger.error("Syllabus generation/retrieval finished but no syllabus_id returned.")
+                    messages.error(request, "Assessment complete, but there was an issue retrieving your syllabus.")
+                    return redirect(reverse('dashboard'))
+
+            except ApplicationError as e:
+                logger.error(f"Syllabus generation failed for user {user.pk}: {e}", exc_info=True)
+                messages.error(request, f"Assessment complete, but syllabus generation failed: {e}")
+                return redirect(reverse('dashboard'))
+            except Exception as e: # Catch any other unexpected errors
+                logger.exception(f"Unexpected error during syllabus generation call for user {user.pk}: {e}")
+                messages.error(request, "An unexpected error occurred after completing the assessment.")
+                return redirect(reverse('dashboard'))
+            # --- End NEW ---
 
     except Exception as e:
         logger.error(f"Error submitting answer: {str(e)}", exc_info=True)
+        # Ensure state is cleared on general error too
+        await del_session_key(request.session, "assessment_state")
+        # Return JSON error for frontend handling if it's not a completion redirect
         return JsonResponse(
             {"error": f"Failed to process answer: {str(e)}"}, status=500
         )
