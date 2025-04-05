@@ -120,17 +120,14 @@
         if (sidebar) {
              sidebar.classList.add('open');
         }
-        // If topic input is needed here, it should be added to this template
-        // or the logic in base.html uncommented and potentially moved.
-        // For now, just opening sidebar.
-        // if (topicInput) {
-        //     topicInput.style.display = 'block';
-        //     const inputField = topicInput.querySelector('input');
-        //     if (inputField) {
-        //         inputField.focus();
-        //     }
-        // }
-        alert("Start New Topic functionality needs to be implemented."); // Placeholder
+        const topic = prompt("Enter the topic you want to learn about:");
+        if (topic) {
+            // Construct the URL dynamically. Note: Django's url tag needs a placeholder
+            // that we replace in JS. We use a dummy topic 'PLACEHOLDER_TOPIC'.
+            let urlTemplate = "{% url 'onboarding_start' 'PLACEHOLDER_TOPIC' %}";
+            let redirectUrl = urlTemplate.replace('PLACEHOLDER_TOPIC', encodeURIComponent(topic));
+            window.location.href = redirectUrl;
+        }
     }
 
     // Attach listener for the custom topic form after DOM is loaded

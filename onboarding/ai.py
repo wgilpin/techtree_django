@@ -155,13 +155,19 @@ class TechTreeAI:
             query = search_queries[-1]  # Use the latest query
 
         try:
-            search_results = await call_with_retry(
-                self.search_tool.invoke, {"query": query}
-            )
+            # Call synchronously as invoke seems to be sync in live env
+            search_results = self.search_tool.invoke({"query": query})
             logger.info("Search successful for query: %s", query)
             # Append results, don't overwrite
             existing_results = state.get("google_results", [])
-            updated_results = existing_results + [search_results]
+            # Ensure search_results is treated as a list before concatenation
+            if not isinstance(search_results, list):
+                 # Wrap non-list in list, handle None/empty string etc.
+                search_results_list = [search_results] if search_results else []
+            else:
+                search_results_list = search_results
+
+            updated_results = existing_results + search_results_list
             return {"google_results": updated_results, "search_completed": True}
         except Exception as e:
             logger.error(
@@ -187,19 +193,29 @@ class TechTreeAI:
         chain = prompt | self.llm
 
         # Prepare input, ensuring all keys expected by the prompt are present
+        target_difficulty = state.get(
+            "current_target_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY
+        )
+        # Map numeric difficulty to a descriptive name
+        difficulty_map = {1: "Beginner", 2: "Intermediate", 3: "Advanced"}
+        difficulty_name = difficulty_map.get(target_difficulty, "Intermediate") # Default if somehow invalid
+
+        # Format search results for the prompt context
+        search_results_list = state.get("google_results", [])
+        search_context = "\n\n".join(map(str, search_results_list)) if search_results_list else "No search results available."
+
         prompt_input = {
             "topic": state.get("topic", "Unknown Topic"),
-            "level": state.get("knowledge_level", "beginner"),
-            "difficulty": state.get(
-                "current_target_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY
-            ),
-            "previous_questions": json.dumps(state.get("questions_asked", [])),
-            "wikipedia_summary": state.get("wikipedia_content", "Not available"),
-            "google_summary": json.dumps(state.get("google_results", [])),
+            "knowledge_level": state.get("knowledge_level", "beginner"),
+            "target_difficulty": target_difficulty,
+            "difficulty_name": difficulty_name,
+            "questions_asked_str": json.dumps(state.get("questions_asked", [])),
+            "search_context": search_context,
         }
 
         try:
-            response = await call_with_retry(chain.invoke, prompt_input)
+            # Call synchronously as invoke seems to be sync in live env
+            response = chain.invoke(prompt_input)
             content = str(response.content).strip()
             logger.debug("Raw question generation response: %s", content)
 
