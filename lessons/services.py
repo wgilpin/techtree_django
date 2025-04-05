@@ -9,7 +9,6 @@ lesson_interaction_service.py from the Flask version.
 
 # pylint: disable=no-member
 
-import codecs
 import json
 import re
 import logging
@@ -708,7 +707,7 @@ def handle_chat_message(
             elif output_state and output_state.get("active_assessment"):
                 assistant_message_type = "assessment_prompt"
 
-            assistant_message_obj = ConversationHistory.objects.create(
+            ConversationHistory.objects.create(
                 progress=progress,
                 role="assistant",
                 message_type=assistant_message_type,

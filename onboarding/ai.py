@@ -12,7 +12,6 @@ from typing import TypedDict, List, Dict, Any, Optional
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.tools.tavily_search import TavilySearchResults
-from langgraph.graph import StateGraph
 from django.conf import settings
 
 from syllabus.ai.utils import call_with_retry  # Re-use retry logic
@@ -85,7 +84,7 @@ def _get_llm(
             google_api_key=api_key,
             temperature=temperature,
             convert_system_message_to_human=True,
-        ) # type: ignore[call-arg]
+        )  # type: ignore[call-arg]
     except Exception as e:
         logger.error(
             "Failed to initialize ChatGoogleGenerativeAI: %s", e, exc_info=True
@@ -162,7 +161,7 @@ class TechTreeAI:
             existing_results = state.get("google_results", [])
             # Ensure search_results is treated as a list before concatenation
             if not isinstance(search_results, list):
-                 # Wrap non-list in list, handle None/empty string etc.
+                # Wrap non-list in list, handle None/empty string etc.
                 search_results_list = [search_results] if search_results else []
             else:
                 search_results_list = search_results
@@ -198,11 +197,15 @@ class TechTreeAI:
         )
         # Map numeric difficulty to a descriptive name
         difficulty_map = {1: "Beginner", 2: "Intermediate", 3: "Advanced"}
-        difficulty_name = difficulty_map.get(target_difficulty, "Intermediate") # Default if somehow invalid
+        difficulty_name = difficulty_map.get(
+            target_difficulty, "Intermediate"
+        )  # Default if somehow invalid
 
         # Format search results for the prompt context
         search_results_list = state.get("google_results", [])
-        search_context = "\n\n".join(map(str, search_results_list)) if search_results_list else "No search results available."
+        search_context = "No search results available."
+        if search_results_list:
+            search_context = "\n\n".join(map(str, search_results_list))
 
         prompt_input = {
             "topic": state.get("topic", "Unknown Topic"),
