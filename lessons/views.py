@@ -32,6 +32,47 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)  # Ensure logger is initialized
 
 
+def clean_exposition_string(text: Optional[str]) -> Optional[str]:
+    """Decodes unicode escapes and fixes specific known issues in exposition text."""
+    if not text:
+        return text
+
+    cleaned_text = text
+    try:
+        # Decode standard Python unicode escapes (\uXXXX, \xXX)
+        # Using 'latin-1' to handle potential byte values mixed with unicode escapes
+        # and 'ignore' errors to skip problematic sequences.
+        cleaned_text = cleaned_text.encode('latin-1', errors='ignore').decode('unicode_escape', errors='ignore')
+        # Alternative: cleaned_text = bytes(text, "utf-8").decode("unicode_escape")
+    except Exception as e:
+        logger.warning("Failed to decode unicode escapes in exposition: %s", e)
+        # Continue with the original text if decoding fails, specific fixes might still apply
+
+    # --- Specific known fixes (apply AFTER unicode decoding) ---
+
+    # Fix: \u0007pprox -> \approx (where \u0007 might be a bell char or similar artifact)
+    # This handles the case where the unicode decoding might not have fixed it.
+    cleaned_text = cleaned_text.replace("\u0007pprox", r"\approx") # Use raw string for \approx
+
+    # Fix: \x08egin{ -> \begin{ (Backspace artifact)
+    cleaned_text = cleaned_text.replace("\x08egin{", r"\begin{") # Use raw string
+
+    # Fix: â€“ -> – (common Mojibake for en-dash)
+    cleaned_text = cleaned_text.replace("â€“", "–")
+    # Fix: Ã¶ -> ö (common Mojibake for o-umlaut, e.g., Eötvös)
+    cleaned_text = cleaned_text.replace("Ã¶", "ö")
+    # Fix: \\, -> \, (Extra backslash before LaTeX space)
+    cleaned_text = cleaned_text.replace("\\\\,", r"\,")
+    # Fix: \\mu -> \mu, \\alpha -> \alpha, etc. (Extra backslash before greek letters)
+    # Using regex to be more general for common LaTeX commands
+    cleaned_text = re.sub(r"\\\\([a-zA-Z]+)", r"\\\1", cleaned_text)
+
+
+    # Add other specific replacements if needed based on observed errors
+
+    return cleaned_text
+
+
 @login_required
 def lesson_detail(
     request: HttpRequest, syllabus_id: str, module_index: int, lesson_index: int
@@ -109,19 +150,8 @@ def lesson_detail(
                     if (
                         exposition_value
                     ):  # Check if exposition_value is not None and not empty string
-                        # Explicitly fix the specific mangled sequence after JSON loading
-                        # Target exactly \x08egin{ based on user feedback
-                        mangled_sequence = (
-                            "\x08egin{"  # \x08 is backspace, 'b' is missing
-                        )
-                        correct_sequence = "\\begin{"  # Literal \begin{
-
-                        if mangled_sequence in exposition_value:
-                            exposition_value = exposition_value.replace(
-                                mangled_sequence, correct_sequence
-                            )
-
-                        exposition_content_value = exposition_value
+                        # Clean the extracted exposition string
+                        exposition_content_value = clean_exposition_string(exposition_value)
                     else:
                         # Handle case where exposition key exists but value is None or empty string
                         logger.warning(
@@ -396,8 +426,10 @@ def generate_lesson_content_async(
                     exposition_markdown = raw_exposition_value
 
             if exposition_markdown:
+                # Clean the markdown string before passing to markdownify
+                cleaned_exposition_markdown = clean_exposition_string(exposition_markdown)
                 # Use the markdownify function from templatetags for consistent processing
-                html_content = markdownify(exposition_markdown)
+                html_content = markdownify(cleaned_exposition_markdown)
                 logger.info(
                     "Async content generation successful for lesson %s.", lesson.pk
                 )

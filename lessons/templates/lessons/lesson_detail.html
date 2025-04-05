@@ -203,7 +203,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (data.status === 'success' && data.html_content) {
                 console.log("Content received successfully.");
                 lessonContentArea.innerHTML = data.html_content; // Inject the HTML
-                renderKatex(lessonContentArea); // Render Katex only within the updated area
+                renderMath(lessonContentArea); // Render MathJax only within the updated area
             } else {
                 // Handle specific error status from backend or missing content
                 const errorMessage = data.error || "Content generation failed or returned invalid data.";

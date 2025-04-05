@@ -39,7 +39,6 @@ from .ai.state import LessonState  # Import the state definition
 if TYPE_CHECKING:
     from django.contrib.auth.models import User  # type: ignore[attr-defined]
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -220,22 +219,13 @@ def get_or_create_lesson_content(lesson: Lesson) -> Optional[LessonContent]:
 
                     if exposition_match:
                         raw_exposition_content = exposition_match.group(1)
-                        # Decode standard JSON escapes (\n, \t, \", \\ etc.) using unicode_escape
-                        try:
-                            unescaped_exposition = codecs.decode(
-                                raw_exposition_content, "unicode_escape"
-                            )
-                        except Exception as decode_err:
-                            logger.warning(
-                                "Failed to unescape extracted content for lesson %s: %s. Using raw extracted content.",
-                                lesson.pk,
-                                decode_err,
-                            )
-                            unescaped_exposition = (
-                                raw_exposition_content  # Fallback to raw
-                            )
+                        # The raw_exposition_content extracted by regex already handles JSON string escapes
+                        # (like \", \\, \n). We should use it directly as it contains the literal LaTeX.
+                        # Do NOT apply codecs.decode('unicode_escape') here as it misinterprets LaTeX.
+                        unescaped_exposition = raw_exposition_content
 
-                        # Create the dict directly. Django's JSONField will handle serialization.
+                        # Create the dict directly using the unescaped content.
+                        # No further specific cleaning applied here.
                         content_data = {"exposition": unescaped_exposition}
                         logger.info(
                             "Successfully extracted and unescaped exposition content via regex for lesson %s.",
