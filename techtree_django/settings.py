@@ -192,6 +192,11 @@ LOGGING = {
             'level': 'INFO', # Set level to INFO to ignore DEBUG messages
             'propagate': False,
         },
+        'urllib3.connectionpool': {
+            'handlers': ['console', 'file'],
+            'level': 'WARNING', # Set to WARNING to prevent DEBUG logs to LangSmith
+            'propagate': False,
+        },
     },
 }
 
