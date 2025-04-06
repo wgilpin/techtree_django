@@ -210,39 +210,43 @@ def get_or_create_lesson_content(lesson: Lesson) -> Optional[LessonContent]:
                     # Avoids parsing potentially invalid JSON from LLM.
                     # Assumes "exposition" is the primary key and its value is a string.
                     # Use non-greedy match and look for comma or closing brace after value.
-                    exposition_match = re.search(
-                        r'"exposition"\s*:\s*"(.*?)"\s*(?:,|\})',  # Refined regex
-                        cleaned_text,
-                        re.DOTALL | re.MULTILINE,
-                    )
+                    # --- Use JSON Parsing to Extract Exposition Content ---
+                    exposition_content = ""  # Default value
+                    try:
+                        parsed_data = json.loads(cleaned_text)
+                        if isinstance(parsed_data, dict):
+                            exposition_content = parsed_data.get("exposition", "")
+                            # Ensure content_data is always defined within the scope
+                            content_data = {"exposition": exposition_content}
+                            logger.info(
+                                "Successfully extracted exposition content via JSON parsing for lesson %s.",
+                                lesson.pk,
+                            )
+                        else:
+                            # Handle cases where the parsed data is not a dictionary
+                            logger.warning(
+                                "LLM output parsed as JSON but is not a dictionary for lesson %s. Raw: %s",
+                                lesson.pk,
+                                cleaned_text,
+                            )
+                            content_data = {
+                                "error": "LLM output parsed but not a dictionary.",
+                                "raw_response": cleaned_text,
+                            }
 
-                    if exposition_match:
-                        raw_exposition_content = exposition_match.group(1)
-                        # The raw_exposition_content extracted by regex already handles JSON string escapes
-                        # (like \", \\, \n). We should use it directly as it contains the literal LaTeX.
-                        # Do NOT apply codecs.decode('unicode_escape') here as it misinterprets LaTeX.
-                        unescaped_exposition = raw_exposition_content
-
-                        # Create the dict directly using the unescaped content.
-                        # No further specific cleaning applied here.
-                        content_data = {"exposition": unescaped_exposition}
-                        logger.info(
-                            "Successfully extracted and unescaped exposition content via regex for lesson %s.",
-                            lesson.pk,
-                        )
-                    else:
-                        # Fallback if regex fails
-                        logger.error(
-                            "Failed to extract exposition content using regex for lesson %s. Raw Content: %s",
+                    except json.JSONDecodeError:
+                        logger.warning(
+                            "Failed to parse LLM output as JSON for lesson %s. Raw Content: %s",
                             lesson.pk,
                             cleaned_text,
                         )
+                        # Fallback if JSON parsing fails
                         content_data = {
-                            "error": "Failed to extract exposition content using regex.",
+                            "error": "Failed to parse LLM output as JSON.",
                             "raw_response": cleaned_text,
                         }
                         logger.info(
-                            "Storing error structure due to regex extraction failure for lesson %s.",
+                            "Storing error structure due to JSON parsing failure for lesson %s.",
                             lesson.pk,
                         )
                 except Exception as e:  # Add a general except block
