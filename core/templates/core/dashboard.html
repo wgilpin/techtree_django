@@ -124,9 +124,9 @@
         if (topic) {
             // Construct the URL dynamically. Note: Django's url tag needs a placeholder
             // that we replace in JS. We use a dummy topic 'PLACEHOLDER_TOPIC'.
-            let urlTemplate = "{% url 'onboarding_start' 'PLACEHOLDER_TOPIC' %}";
-            let redirectUrl = urlTemplate.replace('PLACEHOLDER_TOPIC', encodeURIComponent(topic));
-            window.location.href = redirectUrl;
+            // Construct the URL for the assessment page, not the start API endpoint
+            const assessmentUrl = `/onboarding/assess/${encodeURIComponent(topic)}/`;
+            window.location.href = assessmentUrl; // Navigate to the assessment page
         }
     }
 

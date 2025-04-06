@@ -91,14 +91,23 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateAssessmentUI(data) {
         hideError();
         if (data.is_complete) {
-            assessmentArea.style.display = 'none';
-            resultTopic.textContent = currentTopic;
-            resultLevel.textContent = data.knowledge_level || 'N/A';
-            resultScore.textContent = data.score !== undefined ? parseFloat(data.score).toFixed(1) : 'N/A';
-            resultArea.style.display = 'block';
-            if (data.feedback) {
-                feedbackText.textContent = data.feedback;
-                feedbackArea.style.display = 'block'; // Show final feedback if any
+            // NEW: Check for syllabus URL and redirect if present
+            if (data.syllabus_url) {
+                console.log(`Assessment complete. Redirecting to syllabus: ${data.syllabus_url}`);
+                window.location.href = data.syllabus_url;
+                return; // Stop further UI updates as we are redirecting
+            } else {
+                // Fallback: Show completion message if no syllabus URL (e.g., error during generation)
+                console.log("Assessment complete, but no syllabus URL provided. Showing results area.");
+                assessmentArea.style.display = 'none';
+                resultTopic.textContent = currentTopic;
+                resultLevel.textContent = data.knowledge_level || 'N/A';
+                resultScore.textContent = data.score !== undefined ? parseFloat(data.score).toFixed(1) : 'N/A';
+                resultArea.style.display = 'block';
+                if (data.feedback) { // Show feedback even on fallback completion screen
+                    feedbackText.textContent = data.feedback;
+                    feedbackArea.style.display = 'block';
+                }
             }
         } else {
             questionText.textContent = data.question || 'Error: No question received.';
@@ -175,16 +184,17 @@ document.addEventListener('DOMContentLoaded', function() {
         feedbackArea.style.display = 'none'; // Hide old feedback
 
         try {
-            const formData = new FormData();
-            formData.append('answer', answer);
+            // Prepare data as a JSON object
+            const payload = { answer: answer };
 
             const response = await fetch(submitUrl, {
                 method: 'POST',
                 headers: {
                     'X-CSRFToken': csrfToken,
                     'Accept': 'application/json',
+                    'Content-Type': 'application/json', // Set Content-Type to JSON
                 },
-                body: formData, // Send as form data
+                body: JSON.stringify(payload), // Send as JSON string
             });
 
             if (!response.ok) {

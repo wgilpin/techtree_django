@@ -135,7 +135,7 @@ async def start_assessment_view(request: HttpRequest, topic: str) -> JsonRespons
         )
 
 
-@require_POST
+# @require_POST # Removed decorator - body access happens below
 async def submit_answer_view(request: HttpRequest) -> HttpResponse: # Change return type hint
     """Process a user's submitted answer during an assessment. (Async)"""
     logger.info("Async submit answer view called.")
@@ -190,12 +190,14 @@ async def submit_answer_view(request: HttpRequest) -> HttpResponse: # Change ret
         assessment_state["answer_evaluations"] = eval_results.get(
             "answer_evaluations", assessment_state["answer_evaluations"]
         )
-        assessment_state["consecutive_wrong"] = eval_results.get(
-            "consecutive_wrong", assessment_state["consecutive_wrong"]
+        # Update state with results from evaluate_answer (using new/updated keys)
+        assessment_state["consecutive_wrong_at_current_difficulty"] = eval_results.get(
+            "consecutive_wrong_at_current_difficulty", assessment_state.get("consecutive_wrong_at_current_difficulty", 0)
         )
         assessment_state["current_target_difficulty"] = eval_results.get(
-            "current_target_difficulty", assessment_state["current_target_difficulty"]
+            "current_target_difficulty", assessment_state.get("current_target_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY)
         )
+        # Note: consecutive_hard_correct_or_partial is also updated in eval_results now
         assessment_state["consecutive_hard_correct_or_partial"] = eval_results.get(
             "consecutive_hard_correct_or_partial",
             assessment_state["consecutive_hard_correct_or_partial"],
@@ -239,6 +241,7 @@ async def submit_answer_view(request: HttpRequest) -> HttpResponse: # Change ret
             }
             return JsonResponse(response_data)
         else: # Assessment is complete
+            logger.info("Assessment determined to be complete. Calculating final results.") # Added log
             # Calculate final assessment results
             final_state = ai_instance.calculate_final_assessment(assessment_state.copy())
             final_assessment_data = final_state.get("final_assessment", {})
@@ -278,18 +281,19 @@ async def submit_answer_view(request: HttpRequest) -> HttpResponse: # Change ret
             # --- NEW: Trigger Syllabus Generation ---
             topic = assessment_state.get("topic")
             level = assessment_state.get("knowledge_level")
+            logger.info(f"Preparing for syllabus generation. Topic: {topic}, Level: {level}") # Added log
 
             # Clear assessment state from session *before* potentially long syllabus generation
             await del_session_key(request.session, "assessment_state")
             logger.info("Assessment state cleared from session.")
 
             if not topic or not level:
-                 logger.error("Cannot generate syllabus: Topic or Level missing from final assessment state.")
+                 logger.error("Cannot generate syllabus: Topic or Level missing from final assessment state. Redirecting to dashboard.") # Added log
                  messages.error(request, "Assessment complete, but failed to determine topic or level for syllabus generation.")
                  return redirect(reverse('dashboard')) # Redirect to dashboard on error
 
             if not user.is_authenticated:
-                 logger.error("Cannot generate syllabus: User is not authenticated.")
+                 logger.error("Cannot generate syllabus: User is not authenticated. Redirecting to login.") # Added log
                  messages.error(request, "Assessment complete, but you must be logged in to generate a syllabus.")
                  return redirect(reverse('login')) # Redirect to login
 
@@ -300,22 +304,31 @@ async def submit_answer_view(request: HttpRequest) -> HttpResponse: # Change ret
                     topic=topic, level=level, user=user
                 )
                 syllabus_id = syllabus_data.get("syllabus_id")
+                logger.info(f"Syllabus service returned: {syllabus_data}") # Added log
 
                 if syllabus_id:
-                    logger.info(f"Syllabus generated/found (ID: {syllabus_id}). Redirecting to detail page.")
-                    messages.success(request, f"Assessment complete! Your syllabus for '{topic}' ({level}) is ready.")
-                    return redirect(reverse("syllabus:detail", args=[syllabus_id]))
+                    logger.info(f"Syllabus generated/found (ID: {syllabus_id}). Returning JSON with redirect URL.") # Updated log
+                    messages.success(request, f"Assessment complete! Your syllabus for '{topic}' ({level}) is ready.") # Keep the message for next page load
+                    syllabus_url = reverse("syllabus:detail", args=[syllabus_id])
+                    # Return JSON instead of redirecting directly
+                    return JsonResponse({
+                        "is_complete": True,
+                        "knowledge_level": assessment_state.get("knowledge_level"),
+                        "score": assessment_state.get("score"),
+                        "syllabus_url": syllabus_url, # Provide URL for frontend redirect
+                        "feedback": "Assessment complete. Syllabus generated.", # Optional feedback
+                    })
                 else:
-                    logger.error("Syllabus generation/retrieval finished but no syllabus_id returned.")
+                    logger.error("Syllabus generation/retrieval finished but no syllabus_id returned. Redirecting to dashboard.") # Added log
                     messages.error(request, "Assessment complete, but there was an issue retrieving your syllabus.")
                     return redirect(reverse('dashboard'))
 
             except ApplicationError as e:
-                logger.error(f"Syllabus generation failed for user {user.pk}: {e}", exc_info=True)
+                logger.error(f"Syllabus generation failed (ApplicationError) for user {user.pk}: {e}. Redirecting to dashboard.", exc_info=True) # Added log
                 messages.error(request, f"Assessment complete, but syllabus generation failed: {e}")
                 return redirect(reverse('dashboard'))
             except Exception as e: # Catch any other unexpected errors
-                logger.exception(f"Unexpected error during syllabus generation call for user {user.pk}: {e}")
+                logger.exception(f"Unexpected error during syllabus generation call for user {user.pk}: {e}. Redirecting to dashboard.") # Added log
                 messages.error(request, "An unexpected error occurred after completing the assessment.")
                 return redirect(reverse('dashboard'))
             # --- End NEW ---

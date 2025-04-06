@@ -29,9 +29,11 @@ up-to-date question:
 
 {search_context}
 
-Format your response as follows:
-Difficulty: {target_difficulty}
-Question: [your question here]
+Format your response as a JSON object with the keys "difficulty" (integer) and "question" (string). Example:
+{{
+  "difficulty": {target_difficulty},
+  "question": "[your question here]"
+}}
 
 Questions already asked: {questions_asked_str}
 """
@@ -62,10 +64,15 @@ answer as feedback.
 
 Classify the answer as one of: correct=1, partially correct=0.5, or incorrect=0.
 Make sure to include the classification explicitly as a number in your response.
-Respond with the classification: the feedback. For example:
-1:Correct answer because that is the correct name
-or
-0:That is the wrong answer because swans can't live in space
+Respond with a JSON object containing two keys:
+- "score": The classification number (1 for correct, 0.5 for partially correct, 0 for incorrect).
+- "feedback": Your textual feedback on the answer.
+
+Example JSON response:
+{{
+  "score": 0,
+  "feedback": "That is the wrong answer because swans can't live in space"
+}}
 """
 
 
