@@ -27,6 +27,10 @@
 
         <button id="submit-answer-btn" class="primary-button" style="width: 100%;">Submit Answer</button>
     </div>
+    <form action="{% url 'skip_assessment' %}" method="post" style="text-align: center; margin-top: 1rem; margin-bottom: 1rem;">
+        {% csrf_token %}
+        <button type="submit" class="secondary-button" style="padding: 0.5rem 1rem; border: 1px solid #ccc; background-color: #eee; border-radius: 4px; cursor: pointer;">Skip Assessment</button>
+    </form>
 
     <div id="result-area" style="display: none; text-align: center; margin-top: 2rem; padding: 1.5rem; border: 1px solid var(--primary-color); border-radius: 8px; background-color: #e8f5e9;">
         <h2>Assessment Complete!</h2>

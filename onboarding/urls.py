@@ -21,4 +21,8 @@ urlpatterns = [
 
     # URL to view the result of a completed assessment (if needed)
     # path('result/', views.assessment_result_view, name='onboarding_result'),
+
+    # URL to handle skipping the assessment
+    # pylint: disable=no-member
+    path('skip/', views.skip_assessment_view, name='skip_assessment'),
 ]
