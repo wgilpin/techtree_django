@@ -1,6 +1,7 @@
 """Core models for the TechTree Django application."""
 
 import uuid
+import logging
 from typing import Optional, TYPE_CHECKING
 
 from django.conf import settings
@@ -11,6 +12,8 @@ from django.utils import timezone
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
 
+
+logger = logging.getLogger(__name__)
 
 class UserAssessment(models.Model):
     """Represents a user's assessment on a specific topic."""
@@ -203,6 +206,7 @@ class Lesson(models.Model):
         auto_now=True,
         help_text="Timestamp when the lesson was last updated."
     )
+
 
     def __str__(self) -> str:
         """Return a string representation of the lesson."""

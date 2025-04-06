@@ -79,17 +79,33 @@ class SyllabusService:
 
     def _format_syllabus_dict_sync(self, syllabus_obj: Syllabus) -> Dict[str, Any]:
         """Formats a Syllabus ORM object into a dictionary structure synchronously."""
+
+        # Pre-calculate absolute lesson numbers for efficiency
+        all_lessons_ordered = list(
+            Lesson.objects.filter(module__syllabus=syllabus_obj)
+            .order_by('module__module_index', 'lesson_index')
+            .values_list('pk', flat=True) # Fetch only primary keys
+        )
+        absolute_lesson_number_map = {
+            lesson_pk: index + 1 for index, lesson_pk in enumerate(all_lessons_ordered)
+        }
+
         modules_list_sync = []
         # Access related managers synchronously
         # Prefetching should be done in the calling query if needed
         for module in syllabus_obj.modules.order_by("module_index").all(): # type: ignore[attr-defined]
-            lessons_list_sync = [
-                {
-                    "title": lesson.title, "summary": lesson.summary, "duration": lesson.duration,
-                    "lesson_index": lesson.lesson_index, "id": lesson.id,
-                }
-                for lesson in module.lessons.order_by("lesson_index").all()
-            ]
+            lessons_list_sync = []
+            for lesson in module.lessons.order_by("lesson_index").all():
+                absolute_number = absolute_lesson_number_map.get(lesson.pk)
+                lessons_list_sync.append({
+                    "title": lesson.title,
+                    "summary": lesson.summary,
+                    "duration": lesson.duration,
+                    "lesson_index": lesson.lesson_index, # Keep relative index if needed elsewhere
+                    "absolute_lesson_number": absolute_number, # Add absolute number
+                    "id": lesson.id,
+                })
+
             modules_list_sync.append({
                 "title": module.title, "summary": module.summary, "lessons": lessons_list_sync,
                 "module_index": module.module_index, "id": module.id,

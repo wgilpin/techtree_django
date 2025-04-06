@@ -36,7 +36,7 @@
                              {% for lesson in module.lessons %}
                                 <div class="lesson-item">
                                     <div class="lesson-info">
-                                        <span class="lesson-number">Lesson {{ forloop.counter }}</span>
+                                        <span class="lesson-number">Lesson {{ lesson.absolute_lesson_number }}</span>
                                         <h3 class="lesson-title">{{ lesson.title }}</h3>
                                         {# Optionally display lesson summary if available #}
                                         {# <p class="lesson-summary">{{ lesson.summary }}</p> #}

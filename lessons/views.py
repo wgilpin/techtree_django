@@ -7,7 +7,6 @@ import logging
 import re
 from typing import TYPE_CHECKING, Optional
 
-import markdown  # For async view
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -106,6 +105,22 @@ def lesson_detail(
         module = get_object_or_404(Module, syllabus=syllabus, module_index=module_index)
         lesson = get_object_or_404(Lesson, module=module, lesson_index=lesson_index)
 
+        # --- Calculate Absolute Lesson Number ---
+        absolute_lesson_number: Optional[int] = None
+        try:
+            all_lesson_pks = list(
+                Lesson.objects.filter(module__syllabus=syllabus)
+                .order_by('module__module_index', 'lesson_index')
+                .values_list('pk', flat=True)
+            )
+            absolute_lesson_number = all_lesson_pks.index(lesson.pk) + 1
+        except (ValueError, Exception) as e:
+            logger.error(
+                "Failed to calculate absolute_lesson_number for lesson %s in syllabus %s: %s",
+                lesson.pk, syllabus.pk, e, exc_info=True
+            )
+            # Proceed without absolute number if calculation fails
+
         # --- Fetch existing data, but don't trigger generation here ---
         progress, created = UserProgress.objects.get_or_create(
             user=user,
@@ -129,6 +144,24 @@ def lesson_detail(
         conversation_history = list(
             ConversationHistory.objects.filter(progress=progress).order_by("timestamp")
         )
+
+        # --- Add Welcome Message if History is Empty ---
+        if not conversation_history:
+            welcome_message_content = (
+                "Is there anything I can explain more? Ask me any questions, or we can do "
+                "exercises to help to think about it all. Once you're happy with this "
+                "lesson, ask me to start a quiz"
+            )
+            # Create an unsaved ConversationHistory instance for the welcome message.
+            # This satisfies type checking and provides the necessary attributes for the template.
+            welcome_message_instance = ConversationHistory(
+                role="assistant",
+                content=welcome_message_content
+                # No need to set progress or timestamp as it's not saved and template doesn't use them here.
+            )
+            conversation_history.insert(0, welcome_message_instance)
+            logger.info("Prepended initial welcome message to empty conversation history for lesson %s.", lesson.pk)
+        # --- End Welcome Message ---
 
         # Extract exposition string only if content already exists and is valid
         exposition_content_value: Optional[str] = None  # Start as None
@@ -184,6 +217,7 @@ def lesson_detail(
             "title": f"Lesson: {lesson.title}",
             # 'lesson_content': lesson_content, # No longer needed directly in template context
             "exposition_content": exposition_content_value,  # Pass the extracted string value or None
+            "absolute_lesson_number": absolute_lesson_number, # Add absolute index calculated above
             "conversation_history": conversation_history,
             "lesson_state_json": (
                 json.dumps(progress.lesson_state_json)

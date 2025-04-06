@@ -1157,3 +1157,17 @@ label {
 .chat-bubble code {
     font-size: 0.9em;
 }
+
+/* Lesson Content List Indentation */
+#lesson-content-area ul,
+#lesson-content-area ol {
+    padding-left: 2em; /* Indent the entire list */
+    margin-bottom: 1em; /* Add space below lists */
+}
+
+/* Ensure list items flow naturally */
+#lesson-content-area li {
+    /* list-style-position: inside; */ /* Consider if padding isn't enough */
+    margin-bottom: 0.5em; /* Space between list items */
+}
+

@@ -7,16 +7,15 @@
 {% block content %}
 <div class="container mt-4">
     <nav aria-label="breadcrumb">
-        <ol class="breadcrumb">
-            <li class="breadcrumb-item"><a href="{% url 'dashboard' %}">Dashboard</a></li>
-            <li class="breadcrumb-item"><a href="{% url 'syllabus:detail' syllabus.pk %}">Syllabus: {{ syllabus.topic }}</a></li>
-            <li class="breadcrumb-item"><a href="{% url 'syllabus:module_detail' syllabus.pk module.module_index %}">Module {{ module.module_index }}: {{ module.title }}</a></li>
-            <li class="breadcrumb-item active" aria-current="page">Lesson {{ lesson.lesson_index }}: {{ lesson.title }}</li>
-        </ol>
+        <span class="breadcrumb-custom"> {# Or use appropriate styling class #}
+            <a href="{% url 'syllabus:detail' syllabus.pk %}">{{ syllabus.topic }}</a>
+            &nbsp;&gt;&nbsp; {# Use HTML entity for > #}
+            <a href="{% url 'syllabus:module_detail' syllabus.pk module.module_index %}">Module {{ module.module_index }}: {{ module.title }}</a>
+        </span>
     </nav>
 
     <h1 class="mb-3">{{ lesson.title }}</h1>
-    <p class="text-muted">Module {{ module.module_index }} | Lesson {{ lesson.lesson_index }}</p>
+    <p class="text-muted">Lesson {{ absolute_lesson_number }}</p>
     {% if lesson.summary %}
         <p class="lead">{{ lesson.summary }}</p>
     {% endif %}
@@ -31,8 +30,7 @@
                     {{ exposition_content|markdownify }} {# Render existing content #}
                 {% else %}
                     <div id="loading-message">
-                        <p>Generating lesson content, please wait...</p>
-                        {# Optional: Add a spinner or animation #}
+                        {# Spinner will be centered by existing #loading-message styles #}
                         <div class="spinner-border text-primary" role="status">
                             <span class="visually-hidden">Loading...</span>
                         </div>
@@ -40,9 +38,10 @@
                 {% endif %}
             </div>
 
-            <h2>Interactive Chat / Exercises</h2>
-            {# Removed escapejs filter, rely on standard HTML attribute escaping #}
-            <div id="lesson-interaction-area" class="mb-4" data-lesson-state="{{ lesson_state_json }}">
+            <div id="chat-section-container" {% if exposition_content is None %}style="display: none;"{% endif %}>
+                <h2>Interactive Chat / Exercises</h2>
+                {# Removed escapejs filter, rely on standard HTML attribute escaping #}
+                <div id="lesson-interaction-area" class="mb-4" data-lesson-state="{{ lesson_state_json }}">
                 <div id="active-task-area" class="mb-3 p-3 border rounded bg-warning-light">
                     <!-- Active exercise/assessment will be displayed here -->
                 </div>
@@ -71,6 +70,7 @@
                     </div>
                 </form>
                  {# TODO: Add JS for handling chat form submission (AJAX) #}
+                </div>
             </div>
         </div>
         <div class="col-md-4">
@@ -91,6 +91,29 @@
     </div>
 
 </div>
+
+<style>
+#loading-message {
+    display: flex;
+    flex-direction: column; /* Stack text and spinner vertically */
+    justify-content: center; /* Center vertically */
+    align-items: center; /* Center horizontally */
+    min-height: 150px; /* Ensure enough space for vertical centering */
+    text-align: center; /* Ensure text itself is centered if it wraps */
+}
+
+#loading-message .spinner-border {
+    width: 1.5rem; /* Smaller spinner */
+    height: 1.5rem; /* Smaller spinner */
+    border-width: .2em; /* Thinner border */
+    animation: spinner-rotate 0.75s linear infinite; /* Add animation */
+}
+
+@keyframes spinner-rotate {
+    to { transform: rotate(360deg); }
+}
+</style>
+
 
 {% endblock %}
 
@@ -117,6 +140,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
     const lessonContentArea = document.getElementById('lesson-content-area');
     const loadingMessage = document.getElementById('loading-message');
+    const chatSectionContainer = document.getElementById('chat-section-container'); // Get reference to the new container
     let currentLessonState = {}; // Store parsed state
 
     // --- Parse Initial Lesson State ---
@@ -199,6 +223,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(data => {
             // Hide loading message regardless of success or failure now
             if (loadingMessage) loadingMessage.style.display = 'none';
+            if (chatSectionContainer) chatSectionContainer.style.display = 'block'; // Show chat section
 
             if (data.status === 'success' && data.html_content) {
                 console.log("Content received successfully.");
@@ -218,6 +243,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .catch(error => {
             // Hide loading message in case of fetch failure
             if (loadingMessage) loadingMessage.style.display = 'none';
+            if (chatSectionContainer) chatSectionContainer.style.display = 'block'; // Show chat section even on error
 
             console.error('Error fetching lesson content:', error);
             // Use Bootstrap alert for better visibility
