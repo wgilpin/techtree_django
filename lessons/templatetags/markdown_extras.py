@@ -175,8 +175,8 @@ def markdownify(value: str) -> str:
             # Process the stored raw code content: replace \\n, trim, escape
             # IMPORTANT: Replace \\n from the original raw content here
             code_with_newlines = raw_code_content.replace('\\n', '\n')
-            trimmed_code = code_with_newlines.strip()
-            escaped_code = html.escape(trimmed_code)
+            # REMOVED: trimmed_code = code_with_newlines.strip() # This removed leading indentation
+            escaped_code = html.escape(code_with_newlines) # Escape the version with newlines but without stripping
             lang_class = f' class="language-{lang}"' if lang else ""
             code_html = f'<pre><code{lang_class}>{escaped_code}</code></pre>'
             print(f"  Generated code_html: {code_html}")
@@ -199,9 +199,10 @@ def markdownify(value: str) -> str:
             print(f"  ERROR: Could not parse start placeholder {start_placeholder}")
 
 
-    print(f"Final HTML: {final_html}")
+    wrapped_html = f'<div class="markdown-content">{final_html}</div>'
+    print(f"Final Wrapped HTML: {wrapped_html}")
     print("--- Exiting markdownify ---")
-    return mark_safe(final_html)
+    return mark_safe(wrapped_html)
 
 
 @register.filter(name="markdownify_chat")
@@ -274,8 +275,8 @@ def markdownify_chat(value: str) -> str:
             print(f"  Restoring code block. Lang: {lang}, UUID: {uuid_val}")
 
             code_with_newlines = raw_code_content.replace('\\n', '\n')
-            trimmed_code = code_with_newlines.strip()
-            escaped_code = html.escape(trimmed_code)
+            # REMOVED: trimmed_code = code_with_newlines.strip() # This removed leading indentation
+            escaped_code = html.escape(code_with_newlines) # Escape the version with newlines but without stripping
             lang_class = f' class="language-{lang}"' if lang else ""
             code_html = f'<pre><code{lang_class}>{escaped_code}</code></pre>'
 
@@ -287,6 +288,7 @@ def markdownify_chat(value: str) -> str:
              print(f"  ERROR: Could not parse start placeholder {start_placeholder}")
 
 
-    print(f"Final HTML: {final_html}")
+    wrapped_html = f'<div class="markdown-content">{final_html}</div>'
+    print(f"Final Wrapped HTML: {wrapped_html}")
     print("--- Exiting markdownify_chat ---")
-    return mark_safe(final_html)
+    return mark_safe(wrapped_html)

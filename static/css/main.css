@@ -1035,12 +1035,12 @@ label {
 }
 
 .markdown-content pre {
-    background-color: #2d2d2d;
-    color: #f0f0f0;
+    background-color: #e0e0e0; /* Light grey background */
+    color: var(--text-color); /* Dark text for readability */
     padding: 1em;
     border-radius: 4px;
     overflow-x: auto;
-    margin-bottom: 1.5em;
+    margin: 8px; /* Apply 8px margin on all sides */
     font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
     font-size: 0.9em;
     line-height: 1.5;
