@@ -41,7 +41,11 @@ def clean_exposition_string(text: Optional[str]) -> Optional[str]:
         # Decode standard Python unicode escapes (\uXXXX, \xXX)
         # Using 'latin-1' to handle potential byte values mixed with unicode escapes
         # and 'ignore' errors to skip problematic sequences.
-        cleaned_text = cleaned_text.encode('latin-1', errors='ignore').decode('unicode_escape', errors='ignore')
+        text_before_decode = cleaned_text
+        logger.debug("clean_exposition_string: Text BEFORE unicode_escape decode: %r", text_before_decode)
+        # Use 'raw_unicode_escape' which only handles \uXXXX and \UXXXXXXXX, leaving other backslashes alone.
+        cleaned_text = cleaned_text.encode('latin-1', errors='ignore').decode('raw_unicode_escape', errors='ignore')
+        logger.debug("clean_exposition_string: Text AFTER unicode_escape decode: %r", cleaned_text)
         # Alternative: cleaned_text = bytes(text, "utf-8").decode("unicode_escape")
     except Exception as e:
         logger.warning("Failed to decode unicode escapes in exposition: %s", e)

@@ -6,6 +6,7 @@ for fenced code blocks (```) and LaTeX math expressions ($...$ and $$...$$).
 """
 
 import re
+import sys # Add this import
 import markdown
 import uuid  # Use uuid for unique placeholders
 import html # Add this import
@@ -41,9 +42,6 @@ def isolate_code_blocks(text: str) -> tuple[str, dict[str, tuple[str, str]]]:
         code_map[placeholder] = (language, code_content)
         return placeholder
 
-    # Regex to find ```optional_lang\n(content)\n``` blocks
-    # DOTALL allows '.' to match newlines within the code block
-    # Non-greedy match (.*?) for content ensures it stops at the first ```
     # Regex to find ```optional_lang\n(content)\n``` blocks where ``` is on its own line.
     # DOTALL allows '.' to match newlines within the code block
     # MULTILINE allows ^ and $ to match start/end of lines
@@ -83,7 +81,7 @@ def restore_code_blocks(html_text: str, code_map: dict[str, tuple[str, str]]) ->
         )
     return html_text
 
-# --- LaTeX Handling (keep existing isolate_latex and restore_latex) ---
+# --- LaTeX Handling ---
 def isolate_latex(text):
     """
     Isolates LaTeX blocks ($...$ and $$...$$) using unique placeholders.
@@ -108,11 +106,32 @@ def isolate_latex(text):
 
 def restore_latex(html, latex_map):
     """Restores the original LaTeX blocks from placeholders."""
+    print("\n--- Entering restore_latex ---", file=sys.stderr)
+    print(f"Initial HTML:\n{html}\n", file=sys.stderr)
+    print(f"Latex Map: {latex_map}\n", file=sys.stderr)
     for placeholder, latex_block in latex_map.items():
-        # Use a lambda in re.sub to treat latex_block as a literal replacement string
-        html = re.sub(
-            rf"<p>{placeholder}</p>|{placeholder}", lambda match: latex_block, html
-        )
+        print(f"Processing placeholder: {placeholder}", file=sys.stderr)
+        print(f"  Original latex_block from map: {repr(latex_block)}", file=sys.stderr)
+
+        # 1. Convert DB double backslashes to the single backslashes MathJax needs.
+        mathjax_ready_block = latex_block.replace('\\\\', '\\')
+        print(f"  mathjax_ready_block (\\\\ -> \\): {repr(mathjax_ready_block)}", file=sys.stderr)
+
+        # 2. Prepare for re.sub's string replacement processing by escaping backslashes again.
+        # This ensures re.sub interprets \\f as \f, not a form feed or other escape.
+        sub_replacement_string = mathjax_ready_block.replace('\\', '\\\\')
+        print(f"  sub_replacement_string (\\ -> \\\\ for re.sub): {repr(sub_replacement_string)}", file=sys.stderr)
+
+        # 3. Replace placeholder using the prepared string (NO lambda).
+        print(f"  HTML before re.sub for {placeholder}:\n{html}\n", file=sys.stderr)
+        html_before = html
+        # re.sub will process the \\f back to \f during substitution.
+        html = re.sub(rf"<p>{placeholder}</p>|{placeholder}", sub_replacement_string, html)
+        if html == html_before:
+            print(f"  WARNING: No replacement occurred for {placeholder}", file=sys.stderr)
+        else:
+            print(f"  HTML after re.sub for {placeholder}:\n{html}\n", file=sys.stderr)
+    print("--- Exiting restore_latex ---", file=sys.stderr)
     return html
 
 
@@ -133,12 +152,19 @@ def markdownify(value: str) -> str:
     Returns:
         A safe HTML string representing the rendered content.
     """
+    print("\n--- Entering markdownify ---", file=sys.stderr)
+    print(f"Original value:\n{repr(value)}\n", file=sys.stderr)
     # 1. Isolate Code Blocks first
     text_without_code, code_map = isolate_code_blocks(value)
+    print(f"Text after isolate_code_blocks:\n{repr(text_without_code)}\n", file=sys.stderr)
+    print(f"Code Map: {code_map}\n", file=sys.stderr)
     # 2. Isolate LaTeX from the remaining text
     text_without_code_latex, latex_map = isolate_latex(text_without_code)
+    print(f"Text after isolate_latex:\n{repr(text_without_code_latex)}\n", file=sys.stderr)
+    print(f"Latex Map: {latex_map}\n", file=sys.stderr)
 
     # 3. Convert the remaining text to HTML (NO fenced_code extension)
+    print("Calling markdown.markdown...", file=sys.stderr)
     html_intermediate = markdown.markdown(
         text_without_code_latex,
         extensions=[
@@ -147,11 +173,17 @@ def markdownify(value: str) -> str:
         ],
         output_format="html",
     )
+    print(f"HTML after markdown.markdown:\n{html_intermediate}\n", file=sys.stderr)
 
     # 4. Restore LaTeX blocks
+    print("Calling restore_latex...", file=sys.stderr)
     html_with_latex = restore_latex(html_intermediate, latex_map)
+    print(f"HTML after restore_latex:\n{html_with_latex}\n", file=sys.stderr)
     # 5. Restore Code blocks
+    print("Calling restore_code_blocks...", file=sys.stderr)
     final_html = restore_code_blocks(html_with_latex, code_map)
+    print(f"Final HTML after restore_code_blocks:\n{final_html}\n", file=sys.stderr)
+    print("--- Exiting markdownify ---", file=sys.stderr)
 
     return mark_safe(final_html)
 
