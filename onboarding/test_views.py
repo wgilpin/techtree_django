@@ -219,7 +219,8 @@ async def test_submit_answer_view_continue(mock_get_ai, mock_create_assessment, 
         "consecutive_wrong": 0, "consecutive_hard_correct_or_partial": 0,
         "current_target_difficulty": 3, # Ensure this key is returned by mock
         "feedback": "Good", # Ensure feedback is returned
-        "current_question_difficulty": 3 # Add missing key
+        "current_question_difficulty": 3, # Add missing key
+        "consecutive_wrong_at_current_difficulty": 0 # Add key expected by should_continue call
     }
     # State after generating next question
     next_question_state = {
@@ -294,7 +295,8 @@ async def test_submit_answer_view_complete(mock_get_ai, mock_get_or_generate_syl
         "current_target_difficulty": 4, # Ensure this key is returned by mock
         "feedback": "Done", # Ensure feedback is returned
         "current_question_difficulty": 4, # Add missing key
-        "user_id": user.pk # Add user_id for should_continue check
+        "user_id": user.pk, # Add user_id for should_continue check
+        "consecutive_wrong_at_current_difficulty": 0 # Add key expected by should_continue call
     }
     final_assessment_result = {"overall_score": 80.0, "knowledge_level": "advanced"} # Score as percentage
     # Mock calculate_final_assessment to return the state *with* the final_assessment key and feedback
@@ -320,10 +322,16 @@ async def test_submit_answer_view_complete(mock_get_ai, mock_get_or_generate_syl
 
     response = await async_client_fixture.post(url, json.dumps({"answer": user_answer}), content_type='application/json')
 
-    # Expect a redirect (302) to the syllabus detail page
-    assert response.status_code == 302
-    expected_redirect_url = reverse("syllabus:detail", args=[mock_syllabus_id])
-    assert response.url == expected_redirect_url
+    # Expect JSON response (200 OK) now, not redirect
+    assert response.status_code == 200
+    response_json = response.json()
+    assert response_json['is_complete'] is True
+    assert response_json['knowledge_level'] == "advanced" # From final_assessment_result mock
+    assert response_json['score'] == 80.0 # From final_assessment_result mock
+    assert 'syllabus_url' in response_json
+    expected_syllabus_url = reverse("syllabus:detail", args=[mock_syllabus_id])
+    assert response_json['syllabus_url'] == expected_syllabus_url
+    assert response_json['feedback'] == "Assessment complete. Syllabus generated."
 
     # Check session state cleared asynchronously using helper
     session_exists = await session_key_exists_sync(async_client_fixture, settings.ASSESSMENT_STATE_KEY)
@@ -399,3 +407,89 @@ async def test_submit_answer_view_evaluate_error(mock_get_ai, async_client_fixtu
     # Check session state might have error message? (Depends on implementation)
     # session_data = await get_session_value_sync(async_client_fixture, settings.ASSESSMENT_STATE_KEY)
     # assert 'error_message' in session_data
+
+
+@pytest.mark.django_db # Mark test as needing DB access
+@patch('onboarding.views.create_user_assessment') # Mock DB creation for assessment
+@patch('onboarding.views.syllabus_service.get_or_generate_syllabus') # Mock syllabus service call
+@patch('onboarding.views.get_ai_instance') # Mock assessment AI
+async def test_submit_answer_view_complete_returns_json_with_url(mock_get_ai, mock_get_or_generate_syllabus, mock_create_assessment, async_client_fixture, logged_in_user):
+    """Test submitting final answer returns JSON with syllabus URL on completion."""
+    user = await logged_in_user
+    url = reverse('onboarding_submit')
+    user_answer = "Final Answer JSON Test"
+    topic = "JsonCompleteTopic"
+    knowledge_level = "intermediate"
+    score = 75.0
+
+    # Mock AI instance and methods
+    mock_ai_instance = MagicMock()
+    current_state = {
+        "topic": topic, "step": 2,
+        "questions_asked": [{"q": "Q1"}, {"q": "Q2"}, {"q": "Q3"}],
+        "question_difficulties": [2, 3, 4],
+        "answers": [{"a": "A1"}, {"a": "A2"}], "answer_evaluations": [0.8, 0.7],
+        "consecutive_wrong": 0, "consecutive_hard_correct_or_partial": 0,
+        "current_question_difficulty": 4,
+        "current_target_difficulty": 4,
+        "user_id": user.pk
+    }
+    # State after evaluation
+    evaluated_state = {
+        **current_state,
+        "answers": [{"a": "A1"}, {"a": "A2"}, {"answer": user_answer, "feedback": "Done"}],
+        "answer_evaluations": [0.8, 0.7, 0.9],
+        "feedback": "Done",
+        "consecutive_wrong_at_current_difficulty": 0 # Add key expected by should_continue call
+    }
+    # State after final calculation (returned by calculate_final_assessment)
+    final_assessment_result = {"overall_score": score, "knowledge_level": knowledge_level}
+    final_state_with_assessment_key = {
+        **evaluated_state,
+        "final_assessment": final_assessment_result,
+        "is_complete": True,
+        "knowledge_level": knowledge_level, # Ensure level is here for view logic
+        "score": score, # Ensure score is here for view logic
+    }
+
+    mock_ai_instance.evaluate_answer = AsyncMock(return_value=evaluated_state)
+    mock_ai_instance.should_continue.return_value = False # Indicate stop
+    mock_ai_instance.calculate_final_assessment.return_value = final_state_with_assessment_key
+    mock_get_ai.return_value = mock_ai_instance
+
+    # Mock the syllabus service call to return a valid UUID syllabus ID
+    mock_syllabus_id = str(uuid.uuid4())
+    mock_get_or_generate_syllabus.return_value = {"syllabus_id": mock_syllabus_id}
+
+    # Set initial state in session
+    await set_session_value_sync(async_client_fixture, settings.ASSESSMENT_STATE_KEY, current_state)
+
+    # Make the POST request
+    response = await async_client_fixture.post(url, json.dumps({"answer": user_answer}), content_type='application/json')
+
+    # Assert: Expect JSON response (200 OK)
+    assert response.status_code == 200
+    response_json = response.json()
+
+    # Assert: Check JSON content
+    assert response_json['is_complete'] is True
+    assert response_json['knowledge_level'] == knowledge_level
+    assert response_json['score'] == score
+    assert 'syllabus_url' in response_json
+    expected_syllabus_url = reverse("syllabus:detail", args=[mock_syllabus_id])
+    assert response_json['syllabus_url'] == expected_syllabus_url
+    assert response_json['feedback'] == "Assessment complete. Syllabus generated." # Check feedback
+
+    # Assert: Session state should be cleared
+    session_exists = await session_key_exists_sync(async_client_fixture, settings.ASSESSMENT_STATE_KEY)
+    assert not session_exists
+
+    # Assert: Mocks called correctly
+    mock_ai_instance.evaluate_answer.assert_called_once_with(current_state, user_answer)
+    mock_ai_instance.should_continue.assert_called_once_with(evaluated_state)
+    mock_ai_instance.calculate_final_assessment.assert_called_once_with(evaluated_state)
+    mock_ai_instance.generate_question.assert_not_called()
+    mock_create_assessment.assert_called_once() # Check assessment saved
+    mock_get_or_generate_syllabus.assert_called_once_with(
+        topic=topic, level=knowledge_level, user=user
+    )
