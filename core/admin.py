@@ -42,5 +42,21 @@ admin.site.register(UserProgress)
 admin.site.register(Syllabus)
 admin.site.register(Module)
 admin.site.register(Lesson)
-admin.site.register(LessonContent)
+# admin.site.register(LessonContent) # Unregister the simple one
+
+class LessonContentAdmin(admin.ModelAdmin):
+    """Admin configuration for the LessonContent model."""
+    list_display = ('display_module_title_lesson_number', 'created_at') # Use new method name
+    list_filter = ('lesson__module__syllabus', 'lesson__module', 'lesson') # Corrected fields
+    search_fields = ('lesson__module__title', 'lesson__title', 'content_id') # Also search by module title
+    ordering = ('lesson__module__module_index', 'lesson__lesson_index') # Define default ordering here
+
+    @admin.display(description='Module Title: Lesson Number') # Removed ordering from decorator
+    def display_module_title_lesson_number(self, obj) -> str:
+        """Return the related module's title and lesson number formatted."""
+        if obj.lesson and obj.lesson.module:
+            return f"{obj.lesson.module.title}: {obj.lesson.lesson_index}"
+        return "N/A" # Handle cases where lesson/module might be null
+
+admin.site.register(LessonContent, LessonContentAdmin)
 admin.site.register(UserAssessment)
