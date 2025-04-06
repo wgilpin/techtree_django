@@ -113,9 +113,15 @@ def restore_latex(html, latex_map):
         print(f"Processing placeholder: {placeholder}", file=sys.stderr)
         print(f"  Original latex_block from map: {repr(latex_block)}", file=sys.stderr)
 
-        # 1. Convert DB double backslashes to the single backslashes MathJax needs.
-        mathjax_ready_block = latex_block.replace('\\\\', '\\')
-        print(f"  mathjax_ready_block (\\\\ -> \\): {repr(mathjax_ready_block)}", file=sys.stderr)
+        # 1. Special handling for aligned environment - preserve double backslashes for line breaks
+        if '\\begin{aligned}' in latex_block and '\\end{aligned}' in latex_block:
+            # For aligned environment, we need to preserve double backslashes for line breaks
+            # but still convert other double backslashes to single backslashes
+            mathjax_ready_block = latex_block
+        else:
+            # For other LaTeX, convert all double backslashes to single backslashes
+            mathjax_ready_block = latex_block.replace('\\\\', '\\')
+        print(f"  mathjax_ready_block (after processing): {repr(mathjax_ready_block)}", file=sys.stderr)
 
         # 2. Prepare for re.sub's string replacement processing by escaping backslashes again.
         # This ensures re.sub interprets \\f as \f, not a form feed or other escape.
