@@ -107,36 +107,64 @@ def isolate_latex(text):
 def restore_latex(html, latex_map):
     """Restores the original LaTeX blocks from placeholders."""
     print("\n--- Entering restore_latex ---", file=sys.stderr)
-    print(f"Initial HTML:\n{html}\n", file=sys.stderr)
-    print(f"Latex Map: {latex_map}\n", file=sys.stderr)
+    
     for placeholder, latex_block in latex_map.items():
         print(f"Processing placeholder: {placeholder}", file=sys.stderr)
-        print(f"  Original latex_block from map: {repr(latex_block)}", file=sys.stderr)
-
-        # 1. Special handling for aligned environment - preserve double backslashes for line breaks
-        if '\\begin{aligned}' in latex_block and '\\end{aligned}' in latex_block:
-            # For aligned environment, we need to preserve double backslashes for line breaks
-            # but still convert other double backslashes to single backslashes
-            mathjax_ready_block = latex_block
+        print(f"  Original latex_block: {repr(latex_block)}", file=sys.stderr)
+        
+        # SUPER DIRECT APPROACH FOR ALIGNED ENVIRONMENT
+        if '\\begin{aligned}' in latex_block:
+            print(f"  Found aligned environment", file=sys.stderr)
+            
+            # 1. First, handle the specific case we're seeing
+            # Replace "\ \" (backslash space backslash) with "\\" (double backslash)
+            # This is what's needed for line breaks in LaTeX
+            
+            # Start with the original block from the database
+            # $$\\begin{aligned}\\nt' &= \\gamma \\left( t - \\frac{vx}{c^2} \\right) \\\\ \\nx' &= \\gamma (x - vt) \\\\ \\ny' &= y \\\\ \\nz' &= z\\n\\end{aligned}$$
+            
+            # Convert to what MathJax expects:
+            # $$\begin{aligned}
+            # t' &= \gamma \left( t - \frac{vx}{c^2} \right) \\
+            # x' &= \gamma (x - vt) \\
+            # y' &= y \\
+            # z' &= z
+            # \end{aligned}$$
+            
+            # Replace \\n with actual newlines
+            fixed_latex = latex_block.replace('\\n', '\n')
+            print(f"  After \\n -> newline: {repr(fixed_latex)}", file=sys.stderr)
+            
+            # Replace \\begin with \begin and \\end with \end
+            fixed_latex = fixed_latex.replace('\\\\begin', '\\begin').replace('\\\\end', '\\end')
+            print(f"  After \\\\begin -> \\begin: {repr(fixed_latex)}", file=sys.stderr)
+            
+            # Replace \\\\ with \\ for line breaks
+            fixed_latex = fixed_latex.replace('\\\\\\\\', '\\\\')
+            print(f"  After \\\\\\\\ -> \\\\: {repr(fixed_latex)}", file=sys.stderr)
+            
+            # Replace remaining \\ with \ for math operators
+            # But be careful not to replace the line break backslashes
+            # We'll use a regex with negative lookahead to avoid replacing \\
+            # at the end of a line or right before a newline
+            fixed_latex = re.sub(r'\\\\(?!$|\\n|\n)', r'\\', fixed_latex)
+            print(f"  After careful \\\\ -> \\: {repr(fixed_latex)}", file=sys.stderr)
+            
+            mathjax_ready_block = fixed_latex
         else:
             # For other LaTeX, convert all double backslashes to single backslashes
             mathjax_ready_block = latex_block.replace('\\\\', '\\')
-        print(f"  mathjax_ready_block (after processing): {repr(mathjax_ready_block)}", file=sys.stderr)
-
-        # 2. Prepare for re.sub's string replacement processing by escaping backslashes again.
-        # This ensures re.sub interprets \\f as \f, not a form feed or other escape.
-        sub_replacement_string = mathjax_ready_block.replace('\\', '\\\\')
-        print(f"  sub_replacement_string (\\ -> \\\\ for re.sub): {repr(sub_replacement_string)}", file=sys.stderr)
-
-        # 3. Replace placeholder using the prepared string (NO lambda).
-        print(f"  HTML before re.sub for {placeholder}:\n{html}\n", file=sys.stderr)
-        html_before = html
-        # re.sub will process the \\f back to \f during substitution.
-        html = re.sub(rf"<p>{placeholder}</p>|{placeholder}", sub_replacement_string, html)
-        if html == html_before:
-            print(f"  WARNING: No replacement occurred for {placeholder}", file=sys.stderr)
-        else:
-            print(f"  HTML after re.sub for {placeholder}:\n{html}\n", file=sys.stderr)
+        
+        print(f"  Final mathjax_ready_block: {repr(mathjax_ready_block)}", file=sys.stderr)
+        
+        # Replace the placeholder in the HTML
+        # Use a lambda to ensure the replacement is treated as a literal string
+        html = re.sub(
+            rf"<p>{placeholder}</p>|{placeholder}",
+            lambda m: mathjax_ready_block,
+            html
+        )
+    
     print("--- Exiting restore_latex ---", file=sys.stderr)
     return html
 
@@ -171,8 +199,11 @@ def markdownify(value: str) -> str:
 
     # 3. Convert the remaining text to HTML (NO fenced_code extension)
     print("Calling markdown.markdown...", file=sys.stderr)
+    # Explicitly replace literal '\n' with actual newlines before parsing
+    text_to_render = text_without_code_latex.replace('\\n', '\n')
+    print(f"Text being sent to markdown.markdown:\n{repr(text_to_render)}\n", file=sys.stderr)
     html_intermediate = markdown.markdown(
-        text_without_code_latex,
+        text_to_render,
         extensions=[
             # "markdown.extensions.fenced_code", # REMOVED
             "markdown.extensions.tables",

@@ -213,6 +213,7 @@ def get_or_create_lesson_content(lesson: Lesson) -> Optional[LessonContent]:
                     # --- Use JSON Parsing to Extract Exposition Content ---
                     exposition_content = ""  # Default value
                     try:
+                        # First try to parse as JSON
                         parsed_data = json.loads(cleaned_text)
                         if isinstance(parsed_data, dict):
                             exposition_content = parsed_data.get("exposition", "")
@@ -240,15 +241,29 @@ def get_or_create_lesson_content(lesson: Lesson) -> Optional[LessonContent]:
                             lesson.pk,
                             cleaned_text,
                         )
-                        # Fallback if JSON parsing fails
-                        content_data = {
-                            "error": "Failed to parse LLM output as JSON.",
-                            "raw_response": cleaned_text,
-                        }
-                        logger.info(
-                            "Storing error structure due to JSON parsing failure for lesson %s.",
-                            lesson.pk,
-                        )
+                        
+                        # Try to extract exposition content using regex if it looks like JSON
+                        # This handles cases where LaTeX commands cause JSON parsing to fail
+                        exposition_match = re.search(r'"exposition"\s*:\s*"(.*?)"\s*}', cleaned_text, re.DOTALL)
+                        if exposition_match:
+                            exposition_content = exposition_match.group(1)
+                            # Unescape any escaped quotes within the content
+                            exposition_content = exposition_content.replace('\\"', '"')
+                            content_data = {"exposition": exposition_content}
+                            logger.info(
+                                "Successfully extracted exposition content via regex for lesson %s.",
+                                lesson.pk,
+                            )
+                        else:
+                            # Fallback if regex extraction fails
+                            content_data = {
+                                "error": "Failed to parse LLM output as JSON.",
+                                "raw_response": cleaned_text,
+                            }
+                            logger.info(
+                                "Storing error structure due to JSON parsing failure for lesson %s.",
+                                lesson.pk,
+                            )
                 except Exception as e:  # Add a general except block
                     logger.error(
                         "Error processing LLM response (regex/dict creation) for lesson %s: %s",
