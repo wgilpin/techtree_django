@@ -3,6 +3,7 @@
 # pylint: disable=missing-function-docstring, no-member
 
 import uuid
+import asyncio # Import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,11 +11,20 @@ from asgiref.sync import sync_to_async
 
 from core.exceptions import ApplicationError, NotFoundError
 from core.models import Syllabus
+from core.constants import DIFFICULTY_BEGINNER # Import constant to use correct level value
 from syllabus.ai.state import SyllabusState
 from syllabus.ai.syllabus_graph import SyllabusAI
 
 # Mark all tests in this module as needing DB access
 pytestmark = [pytest.mark.django_db(transaction=True)]
+
+# Add teardown to ensure all patches are properly cleaned up
+@pytest.fixture(autouse=True)
+def cleanup_patches():
+    """Fixture to clean up any patches that might have leaked."""
+    yield
+    from unittest.mock import patch
+    patch.stopall()  # Stop all patches after each test
 
 
 @pytest.mark.asyncio
@@ -114,253 +124,65 @@ async def test_get_or_generate_syllabus_existing(
 ):
     # Await fixture ONCE
     syllabus = await existing_syllabus_async
+    # Set status to COMPLETED *before* calling the service
+    syllabus.status = Syllabus.StatusChoices.COMPLETED
+    await sync_to_async(syllabus.save)(update_fields=['status'])
 
     # Use sync_to_async to safely access the user in async context
     get_user = sync_to_async(lambda s: s.user)
     user = await get_user(syllabus)
 
+    # Now call the service - use the correct level value (DIFFICULTY_BEGINNER)
     result = await syllabus_service.get_or_generate_syllabus(
-        topic="Existing Topic", level="beginner", user=user
+        topic="Existing Topic", level=DIFFICULTY_BEGINNER, user=user # Use constant
     )
     assert result is not None
     assert isinstance(result, uuid.UUID) # Check that a UUID was returned
-    # assert result == syllabus.syllabus_id # Comment out exact ID check due to potential test state issues
+    assert result == syllabus.syllabus_id # Should return the existing COMPLETED ID
 
 
 @pytest.mark.asyncio
-# Remove patch for _format_syllabus_dict as it's not called by the tested function
-@patch("syllabus.services.SyllabusService._get_syllabus_ai_instance")
+@patch("asyncio.create_task") # Patch asyncio.create_task to check background launch
+@patch("syllabus.services.SyllabusService._get_syllabus_ai_instance") # Keep mocking AI
 async def test_get_or_generate_syllabus_generate_success(
-    mock_get_ai, syllabus_service, test_user_async # Removed mock_format_dict
+    mock_get_ai, mock_create_task, syllabus_service, test_user_async
 ):
+    """
+    Test that when no syllabus exists, a placeholder is created,
+    a background task is launched, and the placeholder ID is returned.
+    """
     user = await test_user_async
     topic = f"Unique Gen Topic {uuid.uuid4()}"
     level = "intermediate"
-    user_id_str = str(user.pk)
-    generated_uid = str(uuid.uuid4())
 
-    # Mock the AI instance
-    mock_ai_instance = MagicMock(spec=SyllabusAI)
-    mock_get_ai.return_value = mock_ai_instance
+    # Ensure no syllabus exists for this combination initially
+    assert not await Syllabus.objects.filter(topic=topic, level=level, user=user).aexists()
 
-    # Create mock syllabus content and state
-    generated_syllabus_content = {
-        "topic": topic,
-        "level": level,
-        "modules": [{"title": "Gen Mod"}],
-    }
-    mock_final_state = SyllabusState(
-        topic=topic,
-        knowledge_level=level,
-        user_id=user_id_str,
-        generated_syllabus=generated_syllabus_content,
-        existing_syllabus=None,
-        uid=generated_uid,
-        error_message=None,
-        search_results=[],
-        user_feedback=None,
-        syllabus_accepted=False,
-        iteration_count=1,
-        user_entered_topic=topic,
-        is_master=False,
-        parent_uid=None,
-        created_at=None,
-        updated_at=None,
-        search_queries=[],
-        error_generating=False,
+    # Call the method under test
+    result_uuid = await syllabus_service.get_or_generate_syllabus(
+        topic=topic, level=level, user=user
     )
 
-    # Mock the get_or_create_syllabus method
-    mock_ai_instance.get_or_create_syllabus = AsyncMock(return_value=mock_final_state)
+    # Verify a placeholder syllabus was created in the DB
+    try:
+        placeholder_syllabus = await Syllabus.objects.aget(syllabus_id=result_uuid)
+        assert placeholder_syllabus.topic == topic
+        assert placeholder_syllabus.level == level
+        assert placeholder_syllabus.user == user
+        assert placeholder_syllabus.status == Syllabus.StatusChoices.GENERATING
+    except Syllabus.DoesNotExist:
+        pytest.fail(f"Placeholder syllabus with ID {result_uuid} was not created.")
 
-    # Removed mock setup for _format_syllabus_dict
+    # Verify the result is the UUID of the created placeholder
+    assert result_uuid == placeholder_syllabus.syllabus_id
 
-    # Create a patch for the Syllabus.objects.aget method
-    with patch("syllabus.services.Syllabus.objects.prefetch_related") as mock_prefetch:
-        # Mock the select_related and aget methods in the chain
-        mock_select = MagicMock()
-        mock_prefetch.return_value = mock_select
+    # Verify asyncio.create_task was called once to launch background generation
+    mock_create_task.assert_called_once()
 
-        # Create a mock syllabus object
-        mock_saved_syllabus = MagicMock(spec=Syllabus)
-        mock_saved_syllabus.syllabus_id = generated_uid
+    # Optional: Check the arguments passed to the background task if needed
+    # background_task_coro = mock_create_task.call_args[0][0]
+    # assert background_task_coro.__name__ == '_run_generation_task'
+    # # Further inspection of coro args might be complex
 
-        # Set up the aget method to raise DoesNotExist for the first call 
-        # and return the mock syllabus for the second call
-        mock_aget = AsyncMock()
-        mock_select.select_related.return_value = mock_aget
-        mock_aget.aget.side_effect = [Syllabus.DoesNotExist, mock_saved_syllabus]
-
-        # Call the method under test
-        result = await syllabus_service.get_or_generate_syllabus(
-            topic=topic, level=level, user=user
-        )
-
-    # Verify the result - it should be the UUID of the created placeholder
-    assert result is not None
-    assert isinstance(result, uuid.UUID)
-    # We can't easily assert the exact UUID as it's generated,
-    # but we know it should have been created.
-    # We can check if a syllabus with the expected properties exists.
-    created_syllabus = await Syllabus.objects.aget(syllabus_id=result)
-    assert created_syllabus.topic == topic
-    assert created_syllabus.level == level
-    assert created_syllabus.user == user
-
-    # Verify the AI instance was initialized and called correctly
-    mock_ai_instance.initialize.assert_called_once_with(
-        topic=topic, knowledge_level=level, user_id=user_id_str
-    )
-    mock_ai_instance.get_or_create_syllabus.assert_called_once()
-
-    # Removed assertion for mock_format_dict call
-
-
-@pytest.mark.asyncio
-@patch("syllabus.services.SyllabusService._get_syllabus_ai_instance")
-async def test_get_or_generate_syllabus_generate_fail_no_content(
-    mock_get_ai, syllabus_service, test_user_async
-):
-    user = await test_user_async
-    topic = "Fail Topic Content"
-    level = "advanced"
-    user_id_str = str(user.pk)
-
-    # Mock the AI instance
-    mock_ai_instance = MagicMock(spec=SyllabusAI)
-    mock_get_ai.return_value = mock_ai_instance
-
-    # Create mock state with no generated syllabus
-    mock_final_state = SyllabusState(
-        topic=topic,
-        knowledge_level=level,
-        user_id=user_id_str,
-        generated_syllabus=None,
-        existing_syllabus=None,
-        uid=None,
-        error_message="AI failed",
-        search_results=[],
-        user_feedback=None,
-        syllabus_accepted=False,
-        iteration_count=1,
-        user_entered_topic=topic,
-        is_master=False,
-        parent_uid=None,
-        created_at=None,
-        updated_at=None,
-        search_queries=[],
-        error_generating=True,
-    )
-    mock_ai_instance.get_or_create_syllabus = AsyncMock(return_value=mock_final_state)
-
-    # Patch the direct aget call used in the service method
-    with patch("syllabus.services.Syllabus.objects.aget") as mock_aget:
-        # Configure the mock aget to raise DoesNotExist
-
-        mock_aget.side_effect = Syllabus.DoesNotExist
-
-        # Test that the correct exception is raised
-        with pytest.raises(
-            ApplicationError, match="Failed to generate syllabus content"
-        ):
-            await syllabus_service.get_or_generate_syllabus(
-                topic=topic, level=level, user=user
-            )
-
-        # Verify the mock aget was called correctly
-        # Assert the first call was the check for existing syllabus
-        assert mock_aget.call_args_list[0].kwargs == {'topic': topic, 'level': level, 'user': user}
-
-
-@pytest.mark.asyncio
-@patch("syllabus.services.SyllabusService._get_syllabus_ai_instance")
-async def test_get_or_generate_syllabus_generate_fail_no_uid(
-    mock_get_ai, syllabus_service, test_user_async
-):
-    user = await test_user_async
-    topic = "Fail Topic UID"
-    level = "beginner"
-    user_id_str = str(user.pk)
-
-    # Mock the AI instance
-    mock_ai_instance = MagicMock(spec=SyllabusAI)
-    mock_get_ai.return_value = mock_ai_instance
-
-    # Create mock state with generated syllabus but no UID
-    generated_syllabus_content = {"topic": topic, "level": level, "modules": []}
-    mock_final_state = SyllabusState(
-        topic=topic,
-        knowledge_level=level,
-        user_id=user_id_str,
-        generated_syllabus=generated_syllabus_content,
-        existing_syllabus=None,
-        uid=None,
-        error_message=None,
-        search_results=[],
-        user_feedback=None,
-        syllabus_accepted=False,
-        iteration_count=1,
-        user_entered_topic=topic,
-        is_master=False,
-        parent_uid=None,
-        created_at=None,
-        updated_at=None,
-        search_queries=[],
-        error_generating=False,
-    )
-    mock_ai_instance.get_or_create_syllabus = AsyncMock(return_value=mock_final_state)
-
-    # Patch the direct aget call used in the service method
-    with patch("syllabus.services.Syllabus.objects.aget") as mock_aget:
-        # Configure the mock aget to raise DoesNotExist
-
-        mock_aget.side_effect = Syllabus.DoesNotExist
-
-        # Test that the correct exception is raised
-        with pytest.raises(
-            ApplicationError, match="Failed to get ID of generated syllabus"
-        ):
-            await syllabus_service.get_or_generate_syllabus(
-                topic=topic, level=level, user=user
-            )
-
-        # Verify the mock aget was called correctly
-        # Assert the first call was the check for existing syllabus
-        assert mock_aget.call_args_list[0].kwargs == {'topic': topic, 'level': level, 'user': user}
-
-
-@pytest.mark.asyncio
-@patch("syllabus.services.SyllabusService._get_syllabus_ai_instance")
-async def test_get_or_generate_syllabus_ai_exception(
-    mock_get_ai, syllabus_service, test_user_async
-):
-    user = await test_user_async
-    topic = "AI Exception Topic"
-    level = "intermediate"
-
-    # Mock the AI instance
-    mock_ai_instance = MagicMock(spec=SyllabusAI)
-    mock_get_ai.return_value = mock_ai_instance
-
-    # Set up the AI instance to raise an exception
-    mock_ai_instance.get_or_create_syllabus = AsyncMock(
-        side_effect=Exception("AI Network Error")
-    )
-
-    # Patch the direct aget call used in the service method
-    with patch("syllabus.services.Syllabus.objects.aget") as mock_aget:
-        # Configure the mock aget to raise DoesNotExist
-
-        mock_aget.side_effect = Syllabus.DoesNotExist
-
-        # Test that the correct exception is raised
-        with pytest.raises(
-            ApplicationError, match="Failed to generate syllabus: AI Network Error"
-        ):
-            await syllabus_service.get_or_generate_syllabus(
-                topic=topic, level=level, user=user
-            )
-
-        # Verify the mock aget was called correctly
-        # Assert the first call was the check for existing syllabus
-        assert mock_aget.call_args_list[0].kwargs == {'topic': topic, 'level': level, 'user': user}
+# Removed tests that expected synchronous ApplicationError on generation failure,
+# as generation now happens in a background task.

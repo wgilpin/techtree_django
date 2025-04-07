@@ -568,9 +568,6 @@ async def poll_syllabus_status_view(
 
     # No need to cast/assert after using auser() and checking is_authenticated
     # user is now guaranteed to be an authenticated User object
-    logger.debug(
-        f"Polling syllabus status for user {user.pk}, syllabus_id='{syllabus_id}'"
-    )
 
     # Fetch the syllabus asynchronously using sync_to_async with get_object_or_404
     # Note: get_object_or_404 itself is sync, so wrap it.

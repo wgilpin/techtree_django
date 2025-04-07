@@ -47,7 +47,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     async function pollSyllabusStatus() {
-        console.log("Polling syllabus status...");
         try {
             const response = await fetch(pollUrl, {
                 method: 'GET', // Or POST if needed, adjust view accordingly

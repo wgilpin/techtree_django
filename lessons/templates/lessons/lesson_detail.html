@@ -24,15 +24,20 @@
     {# --- Link to Change Difficulty --- #}
     {% if syllabus.level != 'beginner' %}
         <div class="mb-3 mt-2">
-            <a href="#" {# Placeholder href, will be replaced with URL tag later #}
-               onclick="if(confirm('Are you sure you want to switch to a lower difficulty level? This will generate a new syllabus.')) { window.location.href = this.dataset.url; } return false;"
-               class="btn btn-sm btn-outline-secondary change-difficulty-link" {# Added class for potential future JS targeting #}
-               {# We'll add the actual URL via data attribute once the URL is defined #}
+            <a href="#"
+               id="change-difficulty-btn" {# Use ID for JS targeting #}
+               class="btn btn-sm btn-outline-secondary change-difficulty-link"
                data-url="{% url 'lessons:change_difficulty' syllabus.pk %}">
                 <i class="fas fa-arrow-down"></i> Switch to Lower Difficulty
             </a>
         </div>
     {% endif %}
+
+    <!-- Loading Overlay (hidden by default) -->
+    <div id="loading-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; justify-content: center; align-items: center; flex-direction: column;">
+        <div class="spinner-border text-light" style="width: 3rem; height: 3rem;" role="status"></div>
+        <p style="color: white; margin-top: 20px;">Generating syllabus with lower difficulty level...</p>
+    </div>
     {# --- End Link --- #}
 
     <hr>
@@ -61,7 +66,7 @@
                 <div id="active-task-area" class="mb-3 p-3 border rounded bg-warning-light">
                     <!-- Active exercise/assessment will be displayed here -->
                 </div>
-                <div id="chat-history" class="mb-3 p-3 border rounded" style="height: 350px; overflow-y: scroll;"> {# Reduced height slightly #}
+                <div id="chat-history" class="mb-3 p-3 border rounded"> {# Removed inline style to allow CSS control #}
                     <!-- Chat messages -->
                     {% if conversation_history %}
                         {% for message in conversation_history %}
@@ -148,6 +153,65 @@ function renderMath(targetElement = document.body) { // Default to document.body
 }
 
 document.addEventListener('DOMContentLoaded', function() {
+    // --- Change Difficulty AJAX Handling ---
+    const changeDifficultyBtn = document.getElementById('change-difficulty-btn');
+    const loadingOverlay = document.getElementById('loading-overlay');
+
+    if (changeDifficultyBtn && loadingOverlay) { // Check if both elements exist
+        changeDifficultyBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+
+            if (confirm('Are you sure you want to switch to a lower difficulty level? This will generate a new syllabus.')) {
+                // Show loading overlay
+                loadingOverlay.style.display = 'flex';
+
+                // Get the URL from the data attribute
+                const url = this.dataset.url;
+
+                // Make AJAX request
+                fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'X-CSRFToken': csrfToken // Include CSRF token for safety, even on GET if needed by middleware
+                    }
+                })
+                .then(response => {
+                    // Check if response is JSON before parsing
+                    const contentType = response.headers.get("content-type");
+                    if (contentType && contentType.indexOf("application/json") !== -1) {
+                        return response.json().then(data => ({ ok: response.ok, status: response.status, body: data }));
+                    } else {
+                        // Handle non-JSON responses (like HTML error pages)
+                        return response.text().then(text => {
+                             throw new Error(`Received non-JSON response (Status: ${response.status}): ${text.substring(0, 100)}...`);
+                        });
+                    }
+                })
+                .then(result => {
+                    if (result.ok && result.body.success) {
+                        // Redirect to the new syllabus
+                        window.location.href = result.body.redirect_url;
+                    } else {
+                        // Hide loading overlay
+                        loadingOverlay.style.display = 'none';
+                        // Show error from JSON or a generic one
+                        const errorMsg = result.body.error || `Request failed with status ${result.status}`;
+                        console.error('Difficulty change error:', errorMsg);
+                        alert('Error: ' + errorMsg);
+                    }
+                })
+                .catch(error => {
+                    // Hide loading overlay
+                    loadingOverlay.style.display = 'none';
+                    console.error('Error during difficulty change fetch:', error);
+                    alert('An error occurred while changing difficulty: ' + error.message + '. Please try again.');
+                });
+            }
+        });
+    }
+    // --- End Change Difficulty ---
+
     const interactionArea = document.getElementById('lesson-interaction-area');
     const chatForm = document.getElementById('chat-form');
     const userMessageInput = document.getElementById('user-message');

@@ -101,19 +101,60 @@ def search_database(state: SyllabusState) -> Dict[str, Any]:
         return {"existing_syllabus": None, "uid": None, "error_message": error_msg}
 
     try:
-        syllabus_obj = (
+        # Use filter instead of get to handle potential duplicates
+        syllabi = (
             Syllabus.objects.prefetch_related(  # pylint: disable=no-member
                 "modules__lessons"  # Prefetch modules and their lessons
             )
             .select_related("user")
-            .get(
+            .filter(
                 topic=topic,
                 level=knowledge_level,  # Query DB using the value from state
                 user=user,  # This handles user=None correctly for master syllabi
             )
+            .order_by("-updated_at") # Order by most recent first
         )
 
-        logger.info(f"Found existing syllabus in DB. ID: {syllabus_obj.syllabus_id}")
+        syllabus_obj: Optional[Syllabus] = None # Explicit type hint
+        if syllabi.exists():
+            # Prioritize COMPLETED status if multiple exist
+            completed_syllabus = syllabi.filter(status=Syllabus.StatusChoices.COMPLETED).first()
+            if completed_syllabus:
+                syllabus_obj = completed_syllabus
+                logger.info(f"Found {syllabi.count()} matching syllabi. Prioritizing COMPLETED one: ID {syllabus_obj.syllabus_id}")
+            else:
+                # If no COMPLETED one, take the most recent non-completed one
+                # We know syllabi.exists() is True, so .first() should return a Syllabus
+                syllabus_obj = syllabi.first()
+                if syllabus_obj: # Check if first() returned something (should always)
+                     logger.info(f"Found {syllabi.count()} matching syllabi, none COMPLETED. Using most recent: ID {syllabus_obj.syllabus_id}, Status: {syllabus_obj.status}")
+                # else: # This case should theoretically not happen if syllabi.exists() is true
+                #     logger.warning("Syllabi existed but first() returned None.")
+                #     # syllabus_obj remains None
+
+        # Explicitly check if we failed to find/select a suitable syllabus_obj
+        if syllabus_obj is None:
+            logger.info("No suitable syllabus found after filtering.")
+            raise ObjectDoesNotExist("No suitable syllabus found in DB.")
+
+        # --- Existing logic continues below, now operating on the selected syllabus_obj ---
+
+        # logger.info(f"Found existing syllabus in DB. ID: {syllabus_obj.syllabus_id}, Status: {syllabus_obj.status}") # Logging moved up
+
+        # --- Check status of the selected syllabus_obj ---
+        if syllabus_obj.status != Syllabus.StatusChoices.COMPLETED:
+            logger.info(
+                f"Selected syllabus {syllabus_obj.syllabus_id} is not COMPLETED (status: {syllabus_obj.status}). Proceeding with generation."
+            )
+            # Treat as not found for the purpose of skipping generation, but keep UID
+            return {
+                "existing_syllabus": None,
+                "uid": str(syllabus_obj.syllabus_id), # Keep UID to allow update later
+                "error_message": None,
+            }
+        # --- End status check ---
+        # If we reach here, syllabus_obj is COMPLETED and we proceed to format it
+        logger.info(f"Using COMPLETED syllabus {syllabus_obj.syllabus_id} found in DB.")
 
         # Reconstruct the nested dictionary structure expected by the graph state
         modules_list = []
@@ -170,6 +211,7 @@ def search_database(state: SyllabusState) -> Dict[str, Any]:
             ),  # Placeholder if not on model
         }
 
+        # Return the COMPLETED syllabus data
         return {
             "existing_syllabus": syllabus_data,
             "uid": syllabus_data["uid"],
@@ -797,6 +839,8 @@ def save_syllabus(state: SyllabusState) -> Dict[str, Any]:
             # "user": user_obj, # REMOVED - User is a lookup key, not a default to be updated
             # user_entered_topic should generally not be changed by generation
             "user_entered_topic": user_entered_topic_from_state,
+            # Update status to COMPLETED upon successful save
+            "status": Syllabus.StatusChoices.COMPLETED,
             # Add other fields from syllabus_dict that exist on the Syllabus model
             # "duration": syllabus_dict.get("duration"), # REMOVED - Not a field on Syllabus model
             # "learning_objectives": syllabus_dict.get("learning_objectives", []), # REMOVED - Not a field on Syllabus model
@@ -897,6 +941,15 @@ def save_syllabus(state: SyllabusState) -> Dict[str, Any]:
         }
     except Exception as e:
         logger.error(f"Error saving syllabus to database: {e}", exc_info=True)
+        # Attempt to update status to FAILED if possible
+        uid_to_fail = state.get("uid")
+        if uid_to_fail:
+            try:
+                Syllabus.objects.filter(syllabus_id=uid_to_fail).update(status=Syllabus.StatusChoices.FAILED)
+                logger.info(f"Set status to FAILED for syllabus {uid_to_fail} due to save error.")
+            except Exception as update_err:
+                logger.error(f"Could not update status to FAILED for syllabus {uid_to_fail}: {update_err}")
+
         return {
             "syllabus_saved": False,
             "saved_uid": None,

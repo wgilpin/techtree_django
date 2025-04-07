@@ -177,6 +177,11 @@ LOGGING = {
             'level': 'DEBUG', # Reverted back to DEBUG
             'propagate': True,
         },
+        'asyncio': {
+            'handlers': ['file'],
+            'level': 'WARNING',      # Set the desired level here
+            'propagate': False,
+        },
         'django': {
             'handlers': ['console', 'file'],
             'level': 'INFO',
@@ -195,6 +200,11 @@ LOGGING = {
         'urllib3.connectionpool': {
             'handlers': ['console', 'file'],
             'level': 'WARNING', # Set to WARNING to prevent DEBUG logs to LangSmith
+            'propagate': False,
+        },
+        'httpcore': {
+            'handlers': ['file'],
+            'level': 'ERROR',      # Set the desired level here
             'propagate': False,
         },
     },

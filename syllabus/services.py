@@ -226,6 +226,106 @@ class SyllabusService:
             raise ApplicationError(f"Error retrieving lesson details: {e}") from e
 
     # --- Async Methods ---
+    async def get_or_generate_syllabus_sync(
+        self,
+        topic: str,
+        level: str,
+        user: Optional["auth_models.User"],
+    ) -> UUID:
+        """
+        Synchronously gets or generates a syllabus without using background tasks.
+
+        Args:
+            topic: The topic of the syllabus.
+            level: The difficulty level of the syllabus.
+            user: The user requesting the syllabus.
+
+        Returns:
+            The UUID of the existing or newly generated syllabus.
+
+        Raises:
+            ApplicationError: If syllabus generation fails.
+        """
+        user_pk_str = str(user.pk) if user else "None"
+        logger.info(
+            f"Attempting to get/generate syllabus synchronously: Topic='{topic}', Level='{level}', User='{user_pk_str}'"
+        )
+        # First, check if a completed syllabus already exists
+        try:
+            syllabus_obj = await Syllabus.objects.aget(
+                topic=topic, level=level, user=user, status=Syllabus.StatusChoices.COMPLETED
+            )
+            logger.info(
+                f"Found existing COMPLETED syllabus ID {syllabus_obj.syllabus_id} for "
+                f"Topic='{topic}', Level='{level}', User='{user_pk_str}'"
+            )
+            return syllabus_obj.syllabus_id
+        except Syllabus.DoesNotExist:
+            logger.info(
+                f"No existing COMPLETED syllabus found for Topic='{topic}', Level='{level}', User='{user_pk_str}'. "
+                f"Generating new one synchronously."
+            )
+            # No existing completed syllabus, generate a new one synchronously
+
+            # Create a new syllabus with GENERATING status
+            # Use try-except to handle potential creation errors
+            try:
+                placeholder_syllabus = await Syllabus.objects.acreate(
+                    topic=topic,
+                    level=level,
+                    user=user,
+                    user_entered_topic=topic,
+                    status=Syllabus.StatusChoices.GENERATING,
+                )
+                logger.info(f"Created placeholder syllabus ID: {placeholder_syllabus.syllabus_id} for sync generation.")
+            except Exception as e:
+                logger.exception(f"Failed to create placeholder syllabus for sync generation: {e}")
+                raise ApplicationError(f"Failed to initiate syllabus generation: {e}") from e
+
+            # Generate the syllabus content directly (no background task)
+            try:
+                syllabus_ai = self._get_syllabus_ai_instance()
+                syllabus_ai.initialize(
+                    topic=topic, knowledge_level=level, user_id=str(user.pk) if user else None
+                )
+
+                # Run the AI graph to generate the syllabus
+                final_state: SyllabusState = await syllabus_ai.get_or_create_syllabus()
+
+                # Check for explicit error state from AI
+                if final_state.get("error_generating"):
+                    error_msg = final_state.get("error_message", "AI indicated generation error")
+                    logger.error(f"Sync AI generation failed for {placeholder_syllabus.syllabus_id}: {error_msg}")
+                    # Attempt to mark as FAILED
+                    placeholder_syllabus.status = Syllabus.StatusChoices.FAILED
+                    await placeholder_syllabus.asave(update_fields=["status", "updated_at"])
+                    raise ApplicationError(f"Failed to generate syllabus content: {error_msg}")
+
+                # The save_syllabus node should have updated the status to COMPLETED.
+                # Verify status after generation
+                await placeholder_syllabus.arefresh_from_db()
+                if placeholder_syllabus.status != Syllabus.StatusChoices.COMPLETED:
+                    logger.warning(
+                        f"Syllabus {placeholder_syllabus.syllabus_id} status is {placeholder_syllabus.status} after sync generation, expected COMPLETED. Forcing update."
+                    )
+                    placeholder_syllabus.status = Syllabus.StatusChoices.COMPLETED
+                    await placeholder_syllabus.asave(update_fields=["status", "updated_at"])
+
+                logger.info(f"Successfully generated syllabus synchronously for ID: {placeholder_syllabus.syllabus_id}")
+                return placeholder_syllabus.syllabus_id
+
+            except Exception as e:
+                logger.exception(f"Error during synchronous syllabus generation for ID {placeholder_syllabus.syllabus_id}: {e}")
+                # Attempt to mark the placeholder as FAILED
+                try:
+                    placeholder_syllabus.status = Syllabus.StatusChoices.FAILED
+                    await placeholder_syllabus.asave(update_fields=["status", "updated_at"])
+                    logger.info(f"Marked syllabus {placeholder_syllabus.syllabus_id} as FAILED due to sync generation error.")
+                except Exception as update_err:
+                    logger.exception(f"Failed to mark syllabus {placeholder_syllabus.syllabus_id} as FAILED after sync error: {update_err}")
+                raise ApplicationError(f"Failed during syllabus generation: {e}") from e
+
+
 
     async def get_or_generate_syllabus(
         self,
@@ -242,41 +342,56 @@ class SyllabusService:
             f"Attempting to get/generate syllabus: Topic='{topic}', Level='{level}', User='{user_pk_str}'"
         )
         try:
-            # 1. Try to find an existing syllabus for this specific user
-            syllabus_obj = await Syllabus.objects.aget(topic=topic, level=level, user=user)
+            # 1. Try to find an existing COMPLETED syllabus for this specific user
+            syllabus_obj = await Syllabus.objects.aget(
+                topic=topic, level=level, user=user, status=Syllabus.StatusChoices.COMPLETED
+            )
             logger.info(
-                f"Found existing syllabus ID {syllabus_obj.syllabus_id} for "
+                f"Found existing COMPLETED syllabus ID {syllabus_obj.syllabus_id} for "
                 f"Topic='{topic}', Level='{level}', User='{user_pk_str}'"
             )
-            # Return the ID of the existing syllabus
+            # Return the ID of the existing completed syllabus
             return syllabus_obj.syllabus_id
 
         except Syllabus.DoesNotExist:
             logger.info(
-                f"No existing syllabus found for Topic='{topic}', Level='{level}', User='{user_pk_str}'. "
-                f"Creating placeholder and starting generation."
+                f"No existing COMPLETED syllabus found for Topic='{topic}', Level='{level}', User='{user_pk_str}'. "
+                f"Checking for existing placeholder or creating new one."
             )
 
-            # 2. Create a placeholder syllabus immediately
+            # 2. Check if a non-completed placeholder already exists
+            try:
+                placeholder_syllabus = await Syllabus.objects.exclude(
+                    status=Syllabus.StatusChoices.COMPLETED
+                ).aget(topic=topic, level=level, user=user)
+                logger.info(f"Found existing placeholder syllabus ID: {placeholder_syllabus.syllabus_id} with status {placeholder_syllabus.status}. Returning its ID.")
+                # If a placeholder exists (PENDING, GENERATING, FAILED), return its ID
+                # The frontend polling will handle showing status or retrying if FAILED.
+                return placeholder_syllabus.syllabus_id
+            except Syllabus.DoesNotExist:
+                logger.info("No existing placeholder found. Creating new placeholder.")
+                # Continue to create a new placeholder if no placeholder exists
+
+            # 3. Create a new placeholder syllabus immediately
             try:
                 placeholder_syllabus = await Syllabus.objects.acreate(
                     topic=topic,
                     level=level,
                     user=user,
                     user_entered_topic=topic,  # Store the original user input
-                    status=Syllabus.StatusChoices.GENERATING,  # type: ignore[attr-defined]
+                    status=Syllabus.StatusChoices.GENERATING,  # Start as GENERATING
                 )
-                logger.info(f"Created placeholder syllabus ID: {placeholder_syllabus.syllabus_id}")
+                logger.info(f"Created new placeholder syllabus ID: {placeholder_syllabus.syllabus_id}")
             except Exception as e:
                 logger.exception(f"Failed to create placeholder syllabus: {e}")
                 raise ApplicationError(f"Failed to create placeholder syllabus: {e}") from e
 
-            # 3. Define the generation task (now run synchronously below)
+            # 4. Define the generation task to run in the background
             async def _run_generation_task(
                 placeholder_id: UUID, gen_topic: str, gen_level: str, gen_user_id_str: Optional[str]
             ):
                 """Runs the AI generation and updates the placeholder syllabus."""
-                logger.info(f"Starting generation task for syllabus ID: {placeholder_id}")
+                logger.info(f"Starting background generation task for syllabus ID: {placeholder_id}")
                 try:
                     syllabus_ai = self._get_syllabus_ai_instance()
                     syllabus_ai.initialize(
@@ -285,76 +400,67 @@ class SyllabusService:
                     # Run the AI graph to generate or retrieve syllabus data
                     final_state: SyllabusState = await syllabus_ai.get_or_create_syllabus()
 
-                    # Check for explicit error state from AI (matches test condition)
+                    # Check for explicit error state from AI
                     if final_state.get("error_generating"):
                         error_msg = final_state.get("error_message", "AI indicated generation error")
                         logger.error(f"AI generation failed for {placeholder_id}: {error_msg}")
-                        # Raise specific error to match test_get_or_generate_syllabus_generate_fail_no_content expectation
                         raise ApplicationError("Failed to generate syllabus content")
 
                     syllabus_content = final_state.get("generated_syllabus") or final_state.get(
                         "existing_syllabus"
                     )
 
-                    # Check if content is missing (matches test condition)
+                    # Check if content is missing
                     if not syllabus_content or not isinstance(syllabus_content, dict):
                         logger.error(f"AI returned no valid syllabus content for {placeholder_id}.")
-                        # Raise specific error to match test_get_or_generate_syllabus_generate_fail_no_content expectation
                         raise ApplicationError("Failed to generate syllabus content")
 
-                    # Check if UID is missing (matches test condition)
-                    # Note: The SyllabusAI save node should ideally handle saving and return the ID in the state.
-                    # This check aligns with test_get_or_generate_syllabus_generate_fail_no_uid
+                    # Check if UID is missing (save node should handle this)
                     uid = final_state.get("uid")
                     if not uid:
                         logger.error(f"Generated syllabus state missing UID for {placeholder_id}.")
                         raise ApplicationError("Failed to get ID of generated syllabus")
 
                     # If we got here, generation *seems* successful from AI perspective
-                    # Update status if still generating (save node might have already completed it)
-                    syllabus = await Syllabus.objects.aget(pk=placeholder_id)
-                    if syllabus.status == Syllabus.StatusChoices.GENERATING:
-                        syllabus.status = Syllabus.StatusChoices.COMPLETED
-                        await syllabus.asave(update_fields=["status", "updated_at"])
+                    # The save_syllabus node should have updated the status to COMPLETED.
+                    # We can optionally double-check here.
+                    try:
+                        syllabus = await Syllabus.objects.aget(pk=placeholder_id)
+                        if syllabus.status != Syllabus.StatusChoices.COMPLETED:
+                             logger.warning(f"Syllabus {placeholder_id} status is {syllabus.status} after generation, expected COMPLETED.")
+                             # Optionally force update status again if save node might have failed silently
+                             # syllabus.status = Syllabus.StatusChoices.COMPLETED
+                             # await syllabus.asave(update_fields=["status", "updated_at"])
+                    except Syllabus.DoesNotExist:
+                         logger.error(f"Syllabus {placeholder_id} disappeared after generation task!")
+                         # This case indicates a deeper issue, potentially DB transaction rollback
+
                     logger.info(f"Successfully generated syllabus content for ID: {placeholder_id}")
 
-                except ApplicationError as app_err: # Catch specific ApplicationErrors raised above/by AI
-                    logger.error(f"Application error during generation for {placeholder_id}: {app_err}")
+                except Exception as e: # Catch any error during generation
+                    logger.exception(f"Error in background syllabus generation task for ID {placeholder_id}: {e}")
                     try:
+                        # Attempt to mark the placeholder as FAILED
                         syllabus = await Syllabus.objects.aget(pk=placeholder_id)
                         if syllabus.status != Syllabus.StatusChoices.FAILED:
                             syllabus.status = Syllabus.StatusChoices.FAILED
                             await syllabus.asave(update_fields=["status", "updated_at"])
+                            logger.info(f"Marked syllabus {placeholder_id} as FAILED due to generation error.")
                     except Exception as update_err:
-                        logger.exception(f"Failed to mark syllabus {placeholder_id} as FAILED after ApplicationError: {update_err}")
-                    raise app_err # Re-raise ApplicationError to be caught below
+                        logger.exception(f"Failed to mark syllabus {placeholder_id} as FAILED after error: {update_err}")
+                    # Do not re-raise here, just log the error. The placeholder ID is already returned.
 
-                except Exception as e: # Catch other unexpected errors (like network errors mocked in test)
-                    logger.exception(f"Unexpected error in syllabus generation task for ID {placeholder_id}: {e}")
-                    try:
-                        syllabus = await Syllabus.objects.aget(pk=placeholder_id)
-                        if syllabus.status != Syllabus.StatusChoices.FAILED:
-                            syllabus.status = Syllabus.StatusChoices.FAILED
-                            await syllabus.asave(update_fields=["status", "updated_at"])
-                    except Exception as update_err:
-                        logger.exception(f"Failed to mark syllabus {placeholder_id} as FAILED after unexpected error: {update_err}")
-                    # Wrap unexpected errors in ApplicationError for consistent test expectation
-                    # Matches test_get_or_generate_syllabus_ai_exception
-                    raise ApplicationError(f"Failed to generate syllabus: {e}") from e
-            # 4. Run the generation task directly and wait for it
+            # 5. Launch the generation task in the background
             user_id_str_for_task = str(user.pk) if user else None
-            try:
-                await _run_generation_task(
+            asyncio.create_task(
+                _run_generation_task(
                     placeholder_syllabus.syllabus_id, topic, level, user_id_str_for_task
                 )
-                # If successful, return the ID
-                logger.info(f"Synchronous generation successful for {placeholder_syllabus.syllabus_id}")
-                return placeholder_syllabus.syllabus_id
-            except ApplicationError as app_exc: # Catch specific errors propagated from _run_generation_task
-                logger.error(f"Generation failed synchronously for placeholder {placeholder_syllabus.syllabus_id}: {app_exc}")
-                # Re-raise the error to match test expectations
-                raise app_exc
-            # No need for broad Exception catch here as _run_generation_task wraps them
+            )
+            logger.info(f"Launched background generation task for {placeholder_syllabus.syllabus_id}")
+
+            # 6. Return the placeholder ID immediately
+            return placeholder_syllabus.syllabus_id
 
     async def get_syllabus_by_id(self, syllabus_id: str) -> Dict[str, Any]:
         """

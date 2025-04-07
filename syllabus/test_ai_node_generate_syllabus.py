@@ -4,9 +4,17 @@ import json
 from typing import cast
 from unittest.mock import MagicMock, patch
 
+import pytest
 from core.constants import  DIFFICULTY_KEY_TO_DISPLAY
 from syllabus.ai.nodes import generate_syllabus, initialize_state
 from syllabus.ai.state import SyllabusState
+
+# Add teardown to ensure all patches are properly cleaned up
+@pytest.fixture(autouse=True)
+def cleanup_patches():
+    """Fixture to clean up any patches that might have leaked."""
+    yield
+    patch.stopall()  # Stop all patches after each test
 
 # --- Test generate_syllabus ---
 

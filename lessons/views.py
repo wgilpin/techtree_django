@@ -538,89 +538,64 @@ def generate_lesson_content_async(
 
 # @login_required # Cannot use with async view, check manually
 @require_GET  # Use GET as it's triggered by a link click
-async def change_difficulty_view(
-    request: HttpRequest, syllabus_id: uuid.UUID
-) -> HttpResponse:  # Make async
+async def change_difficulty_view(request: HttpRequest, syllabus_id: uuid.UUID) -> HttpResponse:
     """Handles the request to switch to a lower difficulty syllabus."""
-    user = await request.auser()  # Get user asynchronously
+    user = await request.auser()
     if not user.is_authenticated:
-        # Handle unauthenticated user (e.g., redirect to login)
+        # Handle unauthenticated user
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'success': False, 'error': 'Authentication required'}, status=401)
         messages.error(request, "You must be logged in to change syllabus difficulty.")
-        # Assuming LOGIN_URL is set in settings
         return redirect(settings.LOGIN_URL + "?next=" + request.path)
 
-    logger.info(
-        f"User {user.pk} requested difficulty change for syllabus {syllabus_id}"
-    )
-
+    # Check if this is an AJAX request
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+    
     try:
-        # Fetch the current syllabus asynchronously
-        # Fetch the current syllabus asynchronously now that view is async
-        # user is guaranteed to be authenticated here
-        current_syllabus = await sync_to_async(Syllabus.objects.get)(
-            pk=syllabus_id, user=user
-        )  # Await the call
-
-    except Syllabus.DoesNotExist:
-        logger.warning(f"Syllabus {syllabus_id} not found for user {user.pk}")
-        messages.error(request, "Could not find the specified syllabus.")
-        return redirect(reverse("dashboard"))
-    except Exception as e:
-        logger.error(f"Error fetching syllabus {syllabus_id}: {e}", exc_info=True)
-        messages.error(request, "An error occurred while fetching syllabus details.")
-        return redirect(reverse("dashboard"))
-
-    # Now current_syllabus is correctly typed as Syllabus
-    current_level = current_syllabus.level
-    topic = current_syllabus.topic
-
-    # Determine the next lower level using the utility function
-    new_level = get_lower_difficulty(current_level)
-    if new_level is None:
-        logger.warning(
-            f"User {user.pk} tried to lower difficulty from '{current_level}' for syllabus {syllabus_id}"
-        )
-        messages.info(request, "You are already at the lowest difficulty level.")
-        # Redirect back to the syllabus detail page they came from
-        return redirect(reverse("syllabus:detail", args=[syllabus_id]))
-
-    # If new_level is not None, proceed with the change (logging and service call happen next)
-
-    logger.info(
-        f"Changing difficulty for syllabus {syllabus_id} (User: {user.pk}) from "
-        f"'{current_level}' to '{new_level}' for topic '{topic}'"
-    )
-
-    try:
-        # Trigger the generation/retrieval of the new syllabus
-        # This service call might take time if generation is needed
-        # We don't need the result here, just trigger it.
-        # The user will be redirected to the generating page which polls.
-        # Note: syllabus_service.get_or_generate_syllabus is async, so await it.
-        # user is guaranteed authenticated here.
-        placeholder_syllabus_id = await syllabus_service.get_or_generate_syllabus(
+        # Fetch the current syllabus
+        current_syllabus = await sync_to_async(Syllabus.objects.get)(pk=syllabus_id, user=user)
+        current_level = current_syllabus.level
+        topic = current_syllabus.topic
+        
+        # Determine the next lower level
+        new_level = get_lower_difficulty(current_level)
+        if new_level is None:
+            if is_ajax:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Already at lowest difficulty level'
+                })
+            messages.info(request, "You are already at the lowest difficulty level.")
+            return redirect(reverse("syllabus:detail", args=[syllabus_id]))
+        
+        # Log the change
+        logger.info(f"Changing difficulty for syllabus {syllabus_id} (User: {user.pk}) from '{current_level}' to '{new_level}' for topic '{topic}'")
+        
+        # Generate the syllabus synchronously (no background tasks)
+        # Use the new synchronous service method
+        new_syllabus_id = await syllabus_service.get_or_generate_syllabus_sync(
             topic=topic, level=new_level, user=user
-        )  # Await the async service call
-
-        # Redirect to the 'generating syllabus' page using the placeholder ID
-        # Assumes a URL pattern named 'generating_by_id' exists in onboarding.urls
-        # Redirect to the 'generating syllabus' page using the actual syllabus ID
-        # The URL name is 'generating_syllabus' (no namespace) and takes 'syllabus_id'
-        generating_url = reverse(
-            "onboarding:generating_syllabus",
-            kwargs={"syllabus_id": placeholder_syllabus_id},
         )
-        logger.info(
-            f"Redirecting user {user.pk} to generating page for placeholder ID: {placeholder_syllabus_id}"
-        )
-        return redirect(generating_url)
-
+        
+        # Get the URL for the new syllabus
+        new_syllabus_url = reverse('syllabus:detail', args=[new_syllabus_id])
+        
+        if is_ajax:
+            return JsonResponse({
+                'success': True,
+                'redirect_url': new_syllabus_url
+            })
+        else:
+            # Fallback for non-AJAX requests (though unlikely with the JS approach)
+            return redirect(new_syllabus_url)
+            
     except Exception as e:
-        logger.error(
-            f"Error during difficulty change process for user {user.pk}, syllabus {syllabus_id}: {e}",
-            exc_info=True,
-        )
-        messages.error(
-            request, "An unexpected error occurred while changing the difficulty."
-        )
+        logger.error(f"Error during difficulty change process: {e}", exc_info=True)
+        if is_ajax:
+            return JsonResponse({
+                'success': False,
+                'error': str(e) # Provide a generic error or specific if safe
+            }, status=500)
+        messages.error(request, "An unexpected error occurred while changing the difficulty.")
+        # Redirect to dashboard or a relevant error page for non-AJAX
         return redirect(reverse("dashboard"))

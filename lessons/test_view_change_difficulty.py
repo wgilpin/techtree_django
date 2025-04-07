@@ -115,41 +115,42 @@ async def test_change_difficulty_lowest_level(logged_in_user_pytest):
 @pytest.mark.asyncio
 @pytest.mark.django_db
 @patch(
-    "lessons.views.syllabus_service.get_or_generate_syllabus", new_callable=AsyncMock
+    "lessons.views.syllabus_service.get_or_generate_syllabus_sync", new_callable=AsyncMock # Patch the new sync method
 )
-async def test_change_difficulty_success(mock_generate, logged_in_user_pytest):
-    """Test successful difficulty change redirects to generating page."""
-    user, client = await logged_in_user_pytest  # Await the fixture
+async def test_change_difficulty_success(mock_generate_sync, logged_in_user_pytest):
+    """Test successful AJAX difficulty change returns correct JSON."""
+    user, client = await logged_in_user_pytest
     topic = "IntermediateTopic"
     current_level = DIFFICULTY_GOOD_KNOWLEDGE
     new_level = DIFFICULTY_EARLY_LEARNER
-    # Create syllabus directly using sync_to_async as it's outside the view logic being tested
     syllabus = await sync_to_async(Syllabus.objects.create)(
         topic=topic, level=current_level, user=user
     )
 
     url = reverse("lessons:change_difficulty", args=[syllabus.pk])
-    # We expect the redirect URL to use the ID returned by the mocked service call
-    expected_redirect_id = uuid.uuid4()
+    # The service call will return the ID of the *new* syllabus
+    expected_new_syllabus_id = uuid.uuid4()
 
-    # Call the view directly using the test client
-    # The outer patch on syllabus_service.get_or_generate_syllabus is active
-    mock_generate.return_value = (
-        expected_redirect_id  # Use the specific UUID we defined
-    )
-    response = await client.get(url)
+    # Mock the return value of the *new* service method
+    mock_generate_sync.return_value = expected_new_syllabus_id
 
-    # Verify the mock was called
-    mock_generate.assert_awaited_once()
+    # Make an AJAX request by adding the header
+    response = await client.get(url, headers={'X-Requested-With': 'XMLHttpRequest'}) # Use headers dict explicitly
 
-    # Assertions should be inside the test function
-    assert response.status_code == 302
-    expected_generating_url = reverse(
-        "onboarding:generating_syllabus", kwargs={"syllabus_id": expected_redirect_id}
-    )
-    assert response.url == expected_generating_url
-    # Check the async mock was awaited (or called if service was sync)
-    mock_generate.assert_called_once_with(topic=topic, level=new_level, user=user)
+    # Verify the mock was called correctly
+    mock_generate_sync.assert_awaited_once_with(topic=topic, level=new_level, user=user)
+
+    # Assertions for AJAX response
+    assert response.status_code == 200
+    assert response.headers['Content-Type'] == 'application/json'
+
+    # Parse JSON and check content
+    response_data = response.json()
+    assert response_data['success'] is True
+
+    # Check the redirect URL points to the *new* syllabus detail page
+    expected_redirect_url = reverse('syllabus:detail', args=[expected_new_syllabus_id])
+    assert response_data['redirect_url'] == expected_redirect_url
 
 
 @pytest.mark.asyncio
@@ -164,17 +165,10 @@ async def test_change_difficulty_not_found(logged_in_user_pytest):
     # Create a patched version of the view function
     original_view = lessons.views.change_difficulty_view
 
-    async def patched_view(request, syllabus_id):
-        # Mock the database query to raise DoesNotExist
-        # Mock the database query to raise DoesNotExist
-        with patch("core.models.Syllabus.objects.get") as mock_db_get:
-            mock_db_get.side_effect = ObjectDoesNotExist
-            return await original_view(request, syllabus_id)
-
-    # Apply the patch
-    with patch("lessons.views.change_difficulty_view", side_effect=patched_view):
+    # Use a more direct approach to avoid nested patches
+    with patch("core.models.Syllabus.objects.get", side_effect=ObjectDoesNotExist):
         response = await client.get(url)
-
+        
         assert response.status_code == 302
         assert response.url == dashboard_url
         # Check messages framework if possible/needed

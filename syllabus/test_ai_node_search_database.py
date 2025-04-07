@@ -31,6 +31,7 @@ def existing_user_syllabus(test_user):
         topic="User DB Test Topic",
         level=DIFFICULTY_GOOD_KNOWLEDGE,  # Use constant display value
         user_entered_topic="User DB Test Topic",
+        status=Syllabus.StatusChoices.COMPLETED,  # Set status to COMPLETED
     )
     # Add a module and lesson for structure formatting test
     module = Module.objects.create(
@@ -53,6 +54,7 @@ def existing_master_syllabus():
         topic="Master DB Test Topic",
         level=DIFFICULTY_ADVANCED,  # Use constant display value
         user_entered_topic="Master DB Test Topic",
+        status=Syllabus.StatusChoices.COMPLETED,  # Set status to COMPLETED
         # is_master=True, # Removed: Determined by user=None
     )
     module = Module.objects.create(

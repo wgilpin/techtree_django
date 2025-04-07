@@ -12,6 +12,14 @@ from core.exceptions import ApplicationError
 # Mark all tests in this module as needing DB access
 pytestmark = [pytest.mark.django_db(transaction=True)]
 
+# Add teardown to ensure all patches are properly cleaned up
+@pytest.fixture(autouse=True)
+def cleanup_patches():
+    """Fixture to clean up any patches that might have leaked."""
+    yield
+    from unittest.mock import patch
+    patch.stopall()  # Stop all patches after each test
+
 
 # --- generate_syllabus_view (Async View) ---
 @pytest.mark.asyncio

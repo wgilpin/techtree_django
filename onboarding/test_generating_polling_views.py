@@ -19,6 +19,14 @@ User = get_user_model() # Get the User model
 # Mark all tests in this module as async
 pytestmark = pytest.mark.asyncio
 
+# Add teardown to ensure all patches are properly cleaned up
+@pytest.fixture(autouse=True)
+def cleanup_patches():
+    """Fixture to clean up any patches that might have leaked."""
+    yield
+    from unittest.mock import patch
+    patch.stopall()  # Stop all patches after each test
+
 
 @pytest.mark.django_db
 async def test_generating_syllabus_view_owner_access(
