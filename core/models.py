@@ -3,6 +3,8 @@
 import uuid
 import logging
 from typing import Optional, TYPE_CHECKING
+from django.utils.translation import gettext_lazy as _
+
 
 from django.conf import settings
 from django.db import models
@@ -13,53 +15,52 @@ if TYPE_CHECKING:
     from django.contrib.auth.models import User
 
 
+from core.constants import DIFFICULTY_LEVELS, DIFFICULTY_BEGINNER
+
 logger = logging.getLogger(__name__)
+
 
 class UserAssessment(models.Model):
     """Represents a user's assessment on a specific topic."""
+
     assessment_id: models.UUIDField = models.UUIDField(
         primary_key=True, default=uuid.uuid4, editable=False
     )
     # Use string reference for User model if not imported directly
     # Ensure Optional is used for nullable ForeignKey
-    user: models.ForeignKey[Optional["User"]] = models.ForeignKey( # type: ignore[misc]
+    user: models.ForeignKey[Optional["User"]] = models.ForeignKey(  # type: ignore[misc]
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        help_text="The user who took the assessment."
+        help_text="The user who took the assessment.",
     )
     topic: models.CharField = models.CharField(
-        max_length=255,
-        help_text="The topic of the assessment."
+        max_length=255, help_text="The topic of the assessment."
     )
     knowledge_level: models.CharField = models.CharField(
         max_length=50,
-        help_text="The assessed knowledge level (e.g., beginner, intermediate)."
+        help_text="The assessed knowledge level (e.g., beginner, intermediate).",
     )
     score: models.FloatField = models.FloatField(
-        null=True,
-        blank=True,
-        help_text="The numerical score achieved, if applicable."
+        null=True, blank=True, help_text="The numerical score achieved, if applicable."
     )
     # Annotate JSONField content type if possible, otherwise use Any
     question_history: models.JSONField = models.JSONField(
         null=True,
         blank=True,
-        help_text="JSON containing the history of questions asked."
+        help_text="JSON containing the history of questions asked.",
     )
     response_history: models.JSONField = models.JSONField(
         null=True,
         blank=True,
-        help_text="JSON containing the history of user responses."
+        help_text="JSON containing the history of user responses.",
     )
     created_at: models.DateTimeField = models.DateTimeField(
-        auto_now_add=True,
-        help_text="Timestamp when the assessment was created."
+        auto_now_add=True, help_text="Timestamp when the assessment was created."
     )
     updated_at: models.DateTimeField = models.DateTimeField(
-        auto_now=True,
-        help_text="Timestamp when the assessment was last updated."
+        auto_now=True, help_text="Timestamp when the assessment was last updated."
     )
 
     def __str__(self) -> str:
@@ -70,8 +71,9 @@ class UserAssessment(models.Model):
 
     class Meta:
         """Meta options for UserAssessment."""
+
         indexes = [
-            models.Index(fields=['user']),
+            models.Index(fields=["user"]),
         ]
         verbose_name = "User Assessment"
         verbose_name_plural = "User Assessments"
@@ -79,38 +81,57 @@ class UserAssessment(models.Model):
 
 class Syllabus(models.Model):
     """Represents a learning syllabus for a specific topic and level."""
+
     syllabus_id: models.UUIDField = models.UUIDField(
         primary_key=True, default=uuid.uuid4, editable=False
     )
+
+    class StatusChoices(models.TextChoices):
+        """Defines the possible statuses for syllabus generation."""
+
+        PENDING = "PENDING", _("Pending")
+        GENERATING = "GENERATING", _("Generating")
+        COMPLETED = "COMPLETED", _("Completed")
+        FAILED = "FAILED", _("Failed")
+
     # Ensure Optional is used for nullable ForeignKey
-    user: models.ForeignKey[Optional["User"]] = models.ForeignKey( # type: ignore[misc]
+    user: models.ForeignKey[Optional["User"]] = models.ForeignKey(  # type: ignore[misc]
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        help_text="The user for whom this syllabus was generated (if any)."
+        help_text="The user for whom this syllabus was generated (if any).",
     )
     topic: models.CharField = models.CharField(
-        max_length=255,
-        help_text="The main topic of the syllabus."
+        max_length=255, help_text="The main topic of the syllabus."
     )
     level: models.CharField = models.CharField(
         max_length=50,
-        help_text="The target knowledge level (e.g., beginner, advanced)."
+        choices=[(level, level) for level in DIFFICULTY_LEVELS],
+        default=DIFFICULTY_BEGINNER,
+        help_text="The target knowledge level (e.g., beginner, advanced).",
     )
     user_entered_topic: models.TextField = models.TextField(
         null=True,
         blank=True,
-        help_text="The original topic string entered by the user, if different."
+        help_text="The original topic string entered by the user, if different.",
     )
     created_at: models.DateTimeField = models.DateTimeField(
-        auto_now_add=True,
-        help_text="Timestamp when the syllabus was created."
+        auto_now_add=True, help_text="Timestamp when the syllabus was created."
     )
     updated_at: models.DateTimeField = models.DateTimeField(
-        auto_now=True,
-        help_text="Timestamp when the syllabus was last updated."
+        auto_now=True, help_text="Timestamp when the syllabus was last updated."
     )
+    status = models.CharField(
+        _("generation status"),
+        max_length=20,
+        choices=StatusChoices.choices,
+        default=StatusChoices.PENDING,
+        db_index=True,
+        help_text="The generation status of the syllabus.",
+    )
+
+    objects = models.Manager()  # Explicitly define manager for linters
 
     def __str__(self) -> str:
         """Return a string representation of the syllabus."""
@@ -118,9 +139,10 @@ class Syllabus(models.Model):
 
     class Meta:
         """Meta options for Syllabus."""
+
         indexes = [
-            models.Index(fields=['topic', 'level']),
-            models.Index(fields=['user']),
+            models.Index(fields=["topic", "level"]),
+            models.Index(fields=["user"]),
         ]
         verbose_name = "Syllabus"
         verbose_name_plural = "Syllabi"
@@ -128,33 +150,29 @@ class Syllabus(models.Model):
 
 class Module(models.Model):
     """Represents a module within a syllabus."""
+
     # Django adds 'id' as primary key automatically (type int)
     id: int
     syllabus: models.ForeignKey[Syllabus] = models.ForeignKey(
         Syllabus,
         on_delete=models.CASCADE,
-        related_name='modules',
-        help_text="The syllabus this module belongs to."
+        related_name="modules",
+        help_text="The syllabus this module belongs to.",
     )
     module_index: models.IntegerField = models.IntegerField(
         help_text="The sequential index of this module within the syllabus."
     )
     title: models.CharField = models.CharField(
-        max_length=255,
-        help_text="The title of the module."
+        max_length=255, help_text="The title of the module."
     )
     summary: models.TextField = models.TextField(
-        null=True,
-        blank=True,
-        help_text="A brief summary of the module content."
+        null=True, blank=True, help_text="A brief summary of the module content."
     )
     created_at: models.DateTimeField = models.DateTimeField(
-        auto_now_add=True,
-        help_text="Timestamp when the module was created."
+        auto_now_add=True, help_text="Timestamp when the module was created."
     )
     updated_at: models.DateTimeField = models.DateTimeField(
-        auto_now=True,
-        help_text="Timestamp when the module was last updated."
+        auto_now=True, help_text="Timestamp when the module was last updated."
     )
 
     def __str__(self) -> str:
@@ -164,49 +182,43 @@ class Module(models.Model):
 
     class Meta:
         """Meta options for Module."""
-        unique_together = ('syllabus', 'module_index')
-        ordering = ['syllabus', 'module_index']
+
+        unique_together = ("syllabus", "module_index")
+        ordering = ["syllabus", "module_index"]
         indexes = [
-            models.Index(fields=['syllabus']),
+            models.Index(fields=["syllabus"]),
         ]
 
 
 class Lesson(models.Model):
     """Represents a lesson within a module."""
+
     # Django adds 'id' as primary key automatically (type int)
     id: int
     module: models.ForeignKey[Module] = models.ForeignKey(
         Module,
         on_delete=models.CASCADE,
-        related_name='lessons',
-        help_text="The module this lesson belongs to."
+        related_name="lessons",
+        help_text="The module this lesson belongs to.",
     )
     lesson_index: models.IntegerField = models.IntegerField(
         help_text="The sequential index of this lesson within the module."
     )
     title: models.CharField = models.CharField(
-        max_length=255,
-        help_text="The title of the lesson."
+        max_length=255, help_text="The title of the lesson."
     )
     summary: models.TextField = models.TextField(
-        null=True,
-        blank=True,
-        help_text="A brief summary of the lesson content."
+        null=True, blank=True, help_text="A brief summary of the lesson content."
     )
     duration: models.IntegerField = models.IntegerField(
-        null=True,
-        blank=True,
-        help_text="Estimated duration of the lesson in minutes."
+        null=True, blank=True, help_text="Estimated duration of the lesson in minutes."
     )
     created_at: models.DateTimeField = models.DateTimeField(
-        auto_now_add=True,
-        help_text="Timestamp when the lesson was created."
+        auto_now_add=True, help_text="Timestamp when the lesson was created."
     )
     updated_at: models.DateTimeField = models.DateTimeField(
-        auto_now=True,
-        help_text="Timestamp when the lesson was last updated."
+        auto_now=True, help_text="Timestamp when the lesson was last updated."
     )
-
 
     def __str__(self) -> str:
         """Return a string representation of the lesson."""
@@ -215,34 +227,34 @@ class Lesson(models.Model):
 
     class Meta:
         """Meta options for Lesson."""
-        unique_together = ('module', 'lesson_index')
-        ordering = ['module', 'lesson_index']
+
+        unique_together = ("module", "lesson_index")
+        ordering = ["module", "lesson_index"]
         indexes = [
-            models.Index(fields=['module']),
+            models.Index(fields=["module"]),
         ]
 
 
 class LessonContent(models.Model):
     """Stores the actual content for a lesson, likely in JSON format."""
+
     content_id: models.UUIDField = models.UUIDField(
         primary_key=True, default=uuid.uuid4, editable=False
     )
     lesson: models.ForeignKey[Lesson] = models.ForeignKey(
         Lesson,
         on_delete=models.CASCADE,
-        related_name='content_items',
-        help_text="The lesson this content belongs to."
+        related_name="content_items",
+        help_text="The lesson this content belongs to.",
     )
     content: models.JSONField = models.JSONField(
         help_text="The structured content of the lesson (e.g., text, exercises)."
     )
     created_at: models.DateTimeField = models.DateTimeField(
-        auto_now_add=True,
-        help_text="Timestamp when the content was created."
+        auto_now_add=True, help_text="Timestamp when the content was created."
     )
     updated_at: models.DateTimeField = models.DateTimeField(
-        auto_now=True,
-        help_text="Timestamp when the content was last updated."
+        auto_now=True, help_text="Timestamp when the content was last updated."
     )
 
     def __str__(self) -> str:
@@ -252,8 +264,9 @@ class LessonContent(models.Model):
 
     class Meta:
         """Meta options for LessonContent."""
+
         indexes = [
-            models.Index(fields=['lesson']),
+            models.Index(fields=["lesson"]),
         ]
         verbose_name = "Lesson Content"
         verbose_name_plural = "Lesson Contents"
@@ -261,10 +274,11 @@ class LessonContent(models.Model):
 
 class UserProgress(models.Model):
     """Tracks a user's progress through a specific lesson in a syllabus."""
+
     STATUS_CHOICES = [
-        ('not_started', 'Not Started'),
-        ('in_progress', 'In Progress'),
-        ('completed', 'Completed'),
+        ("not_started", "Not Started"),
+        ("in_progress", "In Progress"),
+        ("completed", "Completed"),
     ]
 
     progress_id: models.UUIDField = models.UUIDField(
@@ -273,20 +287,20 @@ class UserProgress(models.Model):
     user: models.ForeignKey["User"] = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        help_text="The user whose progress is being tracked."
+        help_text="The user whose progress is being tracked.",
     )
     syllabus: models.ForeignKey[Syllabus] = models.ForeignKey(
         Syllabus,
         on_delete=models.CASCADE,
-        help_text="The syllabus the progress relates to."
+        help_text="The syllabus the progress relates to.",
     )
-     # Ensure Optional is used for nullable ForeignKey
-    lesson: models.ForeignKey[Optional[Lesson]] = models.ForeignKey( # type: ignore[misc]
+    # Ensure Optional is used for nullable ForeignKey
+    lesson: models.ForeignKey[Optional[Lesson]] = models.ForeignKey(  # type: ignore[misc]
         Lesson,
         on_delete=models.CASCADE,
         null=True,
         blank=True,
-        help_text="The specific lesson the progress relates to."
+        help_text="The specific lesson the progress relates to.",
     )
     module_index: models.IntegerField = models.IntegerField(
         help_text="Original module index (potentially redundant if lesson FK is used)."
@@ -297,26 +311,25 @@ class UserProgress(models.Model):
     status: models.CharField = models.CharField(
         max_length=20,
         choices=STATUS_CHOICES,
-        default='not_started',
-        help_text="The current completion status of the lesson for the user."
+        default="not_started",
+        help_text="The current completion status of the lesson for the user.",
     )
     score: models.FloatField = models.FloatField(
         null=True,
         blank=True,
-        help_text="Score achieved by the user for this lesson, if applicable."
+        help_text="Score achieved by the user for this lesson, if applicable.",
     )
     lesson_state_json: models.JSONField = models.JSONField(
         null=True,
         blank=True,
-        help_text="JSON blob storing conversational state or other lesson-specific data."
+        help_text="JSON blob storing conversational state or other lesson-specific data.",
     )
     created_at: models.DateTimeField = models.DateTimeField(
         auto_now_add=True,
-        help_text="Timestamp when the progress record was first created."
+        help_text="Timestamp when the progress record was first created.",
     )
     updated_at: models.DateTimeField = models.DateTimeField(
-        auto_now=True,
-        help_text="Timestamp when the progress record was last updated."
+        auto_now=True, help_text="Timestamp when the progress record was last updated."
     )
 
     def __str__(self) -> str:
@@ -328,12 +341,13 @@ class UserProgress(models.Model):
 
     class Meta:
         """Meta options for UserProgress."""
-        unique_together = ('user', 'syllabus', 'module_index', 'lesson_index')
+
+        unique_together = ("user", "syllabus", "module_index", "lesson_index")
         indexes = [
-            models.Index(fields=['user']),
-            models.Index(fields=['syllabus']),
-            models.Index(fields=['user', 'syllabus']),
-            models.Index(fields=['lesson']),
+            models.Index(fields=["user"]),
+            models.Index(fields=["syllabus"]),
+            models.Index(fields=["user", "syllabus"]),
+            models.Index(fields=["lesson"]),
         ]
         verbose_name = "User Progress"
         verbose_name_plural = "User Progress Records"
@@ -341,16 +355,17 @@ class UserProgress(models.Model):
 
 class ConversationHistory(models.Model):
     """Stores individual messages exchanged during a user's lesson interaction."""
+
     ROLE_CHOICES = [
-        ('user', 'User'),
-        ('assistant', 'Assistant'),
-        ('system', 'System'),
+        ("user", "User"),
+        ("assistant", "Assistant"),
+        ("system", "System"),
     ]
     MESSAGE_TYPE_CHOICES = [
-        ('chat', 'Chat Message'),
-        ('exercise_prompt', 'Exercise Prompt'),
-        ('exercise_response', 'Exercise Response'),
-        ('system_update', 'System Update'),
+        ("chat", "Chat Message"),
+        ("exercise_prompt", "Exercise Prompt"),
+        ("exercise_response", "Exercise Response"),
+        ("system_update", "System Update"),
     ]
 
     message_id: models.UUIDField = models.UUIDField(
@@ -359,24 +374,24 @@ class ConversationHistory(models.Model):
     progress: models.ForeignKey[UserProgress] = models.ForeignKey(
         UserProgress,
         on_delete=models.CASCADE,
-        related_name='conversation_history',
-        help_text="The user progress record this message belongs to."
+        related_name="conversation_history",
+        help_text="The user progress record this message belongs to.",
     )
     timestamp: models.DateTimeField = models.DateTimeField(
         default=timezone.now,
         db_index=True,
-        help_text="Timestamp when the message was recorded."
+        help_text="Timestamp when the message was recorded.",
     )
     role: models.CharField = models.CharField(
         max_length=20,
         choices=ROLE_CHOICES,
-        help_text="The role of the sender (user, assistant, system)."
+        help_text="The role of the sender (user, assistant, system).",
     )
     message_type: models.CharField = models.CharField(
         max_length=50,
         choices=MESSAGE_TYPE_CHOICES,
-        default='chat',
-        help_text="The type or context of the message."
+        default="chat",
+        help_text="The type or context of the message.",
     )
     content: models.TextField = models.TextField(
         help_text="The textual content of the message."
@@ -384,7 +399,7 @@ class ConversationHistory(models.Model):
     metadata: models.JSONField = models.JSONField(
         null=True,
         blank=True,
-        help_text="Optional JSON blob for additional message metadata."
+        help_text="Optional JSON blob for additional message metadata.",
     )
 
     def __str__(self) -> str:
@@ -394,10 +409,11 @@ class ConversationHistory(models.Model):
 
     class Meta:
         """Meta options for ConversationHistory."""
-        ordering = ['timestamp']
+
+        ordering = ["timestamp"]
         indexes = [
-            models.Index(fields=['progress']),
-            models.Index(fields=['timestamp']),
+            models.Index(fields=["progress"]),
+            models.Index(fields=["timestamp"]),
         ]
         verbose_name = "Conversation History Message"
         verbose_name_plural = "Conversation History"

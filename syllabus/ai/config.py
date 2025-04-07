@@ -8,7 +8,7 @@ from typing import Optional  # Import Optional
 
 import google.generativeai as genai
 # from dotenv import load_dotenv # Settings are loaded via django-environ in settings.py
-from tavily import TavilyClient  # type: ignore
+from tavily import AsyncTavilyClient  # type: ignore # Changed to Async
 from django.conf import settings # Import Django settings
 
 from core.exceptions import log_and_raise_new, ConfigurationError # Import necessary exceptions/helpers
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__) # Get logger for this module
 
 # Define type hints before assignment
 MODEL: Optional[genai.GenerativeModel] = None  # type: ignore[name-defined]
-TAVILY: Optional[TavilyClient] = None
+TAVILY: Optional[AsyncTavilyClient] = None # Changed to Async
 
 # Configure Gemini API
 try:
@@ -64,7 +64,7 @@ try:
             "Django setting TAVILY_API_KEY is not configured. Tavily search disabled."
         )
     else:
-        TAVILY = TavilyClient(api_key=tavily_api_key)
+        TAVILY = AsyncTavilyClient(api_key=tavily_api_key) # Changed to Async
         logger.info("Syllabus Config: Tavily client configured.")
 except Exception as e:
     logger.error(f"Syllabus Config: Error configuring Tavily: {e}", exc_info=True)

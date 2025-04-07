@@ -2,16 +2,22 @@
 
 # pylint: disable=broad-exception-caught
 
+import inspect
 import json
-import logging  # Use standard logging or Django's
+import logging
 import re
+import asyncio
+
 from typing import Any, Dict, List, Optional
 
 import google.generativeai as genai
+
 # Project specific imports
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ObjectDoesNotExist
 from tavily import AsyncTavilyClient  # type: ignore # Changed to Async
+
+from core.constants import DIFFICULTY_BEGINNER, DIFFICULTY_KEY_TO_DISPLAY
 
 from core.models import Lesson, Module, Syllabus
 
@@ -29,18 +35,27 @@ User = get_user_model()
 def initialize_state(
     _: Optional[SyllabusState],
     topic: str = "",
-    knowledge_level: str = "beginner",
+    knowledge_level: str = "beginner",  # Default to the key
     user_id: Optional[str] = None,
-) -> Dict[str, Any]:  # Changed return type hint
+) -> Dict[str, Any]:
     """Initializes the graph state with topic, knowledge level, and user ID."""
     if not topic:
         raise ValueError("Topic is required")
 
-    # No level validation for now, accept any string
+    # Validate the input knowledge_level key and get the display value
+    knowledge_level_key = knowledge_level.lower()  # Ensure lowercase for lookup
+    knowledge_level_display = DIFFICULTY_KEY_TO_DISPLAY.get(knowledge_level_key)
+
+    if not knowledge_level_display:
+        logger.warning(
+            f"Invalid knowledge level key '{knowledge_level_key}', defaulting to {DIFFICULTY_BEGINNER}"
+        )
+        knowledge_level_display = DIFFICULTY_BEGINNER  # Default to the display value
+
     # Ensure return matches Dict[str, Any]
     initial_state: Dict[str, Any] = {
         "topic": topic,
-        "user_knowledge_level": knowledge_level,
+        "user_knowledge_level": knowledge_level_display,  # Store the display value in state
         "existing_syllabus": None,
         "search_results": [],
         "generated_syllabus": None,
@@ -65,7 +80,9 @@ def search_database(state: SyllabusState) -> Dict[str, Any]:
     """Searches the database for an existing syllabus matching the criteria using Django ORM."""
     # db_service parameter removed
     topic = state["topic"]
-    knowledge_level = state["user_knowledge_level"]
+    knowledge_level = state[
+        "user_knowledge_level"
+    ]  # Should hold the display value (e.g., "Beginner")
     user_id = state.get("user_id")
     logger.info(
         f"DB Search: Topic='{topic}', Level='{knowledge_level}', User={user_id}"
@@ -91,7 +108,7 @@ def search_database(state: SyllabusState) -> Dict[str, Any]:
             .select_related("user")
             .get(
                 topic=topic,
-                level=knowledge_level,
+                level=knowledge_level,  # Query DB using the value from state
                 user=user,  # This handles user=None correctly for master syllabi
             )
         )
@@ -183,12 +200,6 @@ def search_database(state: SyllabusState) -> Dict[str, Any]:
         }  # Return None on error and message
 
 
-import asyncio  # Added
-from typing import Any, Dict, List, Optional
-
-from tavily import AsyncTavilyClient  # Changed from TavilyClient
-
-from .state import SyllabusState
 
 
 async def search_internet(  # Changed to async def
@@ -205,7 +216,7 @@ async def search_internet(  # Changed to async def
         }
 
     topic = state["topic"]
-    knowledge_level = state["user_knowledge_level"]
+    knowledge_level = state["user_knowledge_level"]  # Should hold the display value
     logger.info(f"Internet Search (Async): Topic='{topic}', Level='{knowledge_level}'")
 
     # Define queries and their specific parameters
@@ -223,7 +234,7 @@ async def search_internet(  # Changed to async def
             {"include_domains": ["edu"], "max_results": 3, "search_depth": "advanced"},
         ),
         (
-            f"{topic} course syllabus curriculum for {knowledge_level} students",
+            f"{topic} course syllabus curriculum for {knowledge_level} students",  # Use value from state
             {"max_results": 3, "search_depth": "advanced"},
         ),
     ]
@@ -235,19 +246,58 @@ async def search_internet(  # Changed to async def
     ]
 
     search_results_content: List[str] = []
-    executed_queries = [
+    original_queries = [
         q[0] for q in queries_with_params
-    ]  # Keep track of attempted queries
-    error_message = None
+    ]  # All queries initially intended
+    validation_errors: List[str] = []
+    valid_search_tasks = []
+    valid_queries = []  # Queries corresponding to valid tasks
+    error_message = None  # Initialize error message
+
+    # Validate tasks before gathering
+    logger.debug("Validating search tasks...")
+    for i, task in enumerate(search_tasks):
+        query, params = queries_with_params[i]
+        if inspect.isawaitable(task):
+            valid_search_tasks.append(task)
+            valid_queries.append(query)
+            logger.debug(f"Task for query '{query}' is awaitable.")
+        else:
+            err_msg = f"Non-awaitable task found for query '{query}' with params {params}. Type: {type(task)}"
+            logger.error(err_msg)
+            validation_errors.append(err_msg)
+
+    # Update error message with validation errors if any
+    if validation_errors:
+        validation_error_str = "; ".join(validation_errors)
+        error_message = (
+            validation_error_str
+            if error_message is None
+            else f"{error_message}; {validation_error_str}"
+        )
 
     try:
-        # Run searches concurrently, return exceptions for failed ones
-        logger.info(f"Starting {len(search_tasks)} Tavily searches concurrently...")
-        responses = await asyncio.gather(*search_tasks, return_exceptions=True)
+        # Run only valid searches concurrently, return exceptions for failed ones
+        if valid_search_tasks:
+            logger.info(
+                f"Starting {len(valid_search_tasks)} valid Tavily searches concurrently..."
+            )
+            responses = await asyncio.gather(
+                *valid_search_tasks, return_exceptions=True
+            )
+            logger.info("Asyncio.gather for Tavily searches completed.")
+        else:
+            logger.warning(
+                "No valid awaitable search tasks found after validation. Skipping gather."
+            )
+            responses = []  # No tasks to run
         logger.info("Tavily searches completed.")
 
+        # Process responses for the valid tasks that were run
         for i, response in enumerate(responses):
-            query_attempted = executed_queries[i]
+            query_attempted = valid_queries[
+                i
+            ]  # Use the query from the validated list that was actually run
             if isinstance(response, Exception):
                 logger.error(
                     f"Tavily search failed for query '{query_attempted}': {response}"
@@ -285,16 +335,17 @@ async def search_internet(  # Changed to async def
         # Return an error state immediately
         return {
             "search_results": [],
-            "search_queries": executed_queries,
+            "search_queries": original_queries,  # Report all originally intended queries in case of gather error
             "error_message": f"Core search execution error: {e}",
         }
 
     logger.info(
-        f"Aggregated {len(search_results_content)} search results from {len(executed_queries)} queries."
+        # Log based on executed
+        f"Aggregated {len(search_results_content)} search results from {len(valid_queries)} valid executed queries."
     )
     return {
         "search_results": search_results_content,
-        "search_queries": executed_queries,
+        "search_queries": original_queries,  # Return all originally intended queries in the final state
         "error_message": error_message,
     }
 
@@ -429,7 +480,7 @@ def generate_syllabus(
 
     logger.info("Generating syllabus with AI...")
     topic = state["topic"]
-    knowledge_level = state["user_knowledge_level"]
+    knowledge_level = state["user_knowledge_level"]  # Should hold the display value
     search_results = state["search_results"]
 
     search_context = "\n\n---\n\n".join(
@@ -445,7 +496,9 @@ def generate_syllabus(
         )
 
     prompt = GENERATION_PROMPT_TEMPLATE.format(
-        topic=topic, knowledge_level=knowledge_level, search_context=search_context
+        topic=topic,
+        knowledge_level=knowledge_level,
+        search_context=search_context,  # Pass value from state
     )
 
     response_text = ""
@@ -476,7 +529,7 @@ def generate_syllabus(
         # Construct fallback syllabus
         fallback_syllabus = {
             "topic": topic,
-            "level": knowledge_level,  # Use level from state
+            "level": knowledge_level,  # Use level value from state for fallback
             "duration": "4 weeks (estimated)",
             "learning_objectives": [
                 f"Understand basic concepts of {topic}.",
@@ -653,15 +706,40 @@ def save_syllabus(state: SyllabusState) -> Dict[str, Any]:
         logger.error(error_msg)
         return {"syllabus_saved": False, "saved_uid": None, "error_message": error_msg}
 
-    user_entered_topic = state.get("user_entered_topic", syllabus_to_save.get("topic"))
+    original_topic = state.get("topic")  # Get the topic used for this graph run
+    # Ensure original_topic is valid before proceeding
+    if not original_topic or not isinstance(original_topic, str):
+        error_msg = f"Invalid or missing 'topic' in state: {original_topic}"
+        logger.error(error_msg)
+        return {"syllabus_saved": False, "saved_uid": None, "error_message": error_msg}
+
+    # Get the user_entered_topic specifically. It MUST exist from initialize_state.
+    user_entered_topic_from_state = state.get("user_entered_topic")
+    # Validate: Must be a non-empty string
+    if not user_entered_topic_from_state or not isinstance(
+        user_entered_topic_from_state, str
+    ):
+        error_msg = f"Missing or invalid user_entered_topic in state for saving: '{user_entered_topic_from_state}'"
+        logger.error(error_msg)
+        raise ValueError(error_msg)  # Raise exception as requested
     user_id = state.get("user_id")
-    logger.info(f"Save Attempt: User={user_id}, Topic='{user_entered_topic}'")
+    level_str = state.get("user_knowledge_level")  # Get level from state
+
+    # Validate level_str
+    if not level_str or not isinstance(level_str, str):
+        error_msg = f"Invalid or missing 'user_knowledge_level' in state: {level_str}"
+        logger.error(error_msg)
+        return {"syllabus_saved": False, "saved_uid": None, "error_message": error_msg}
+
+    logger.info(
+        f"Save Attempt: User={user_id}, Topic='{original_topic}', Level='{level_str}'"
+    )  # Log original topic
 
     try:
         syllabus_dict = syllabus_to_save.copy()  # Already checked it's a dict
 
-        topic_str = syllabus_dict.get("topic")
-        level_str = syllabus_dict.get("level")
+        # topic_str = syllabus_dict.get("topic") # No longer use topic from LLM dict for DB key
+        # level_str = state.get("user_knowledge_level") # Moved up and validated
         modules_data = syllabus_dict.get("modules", [])
 
         # Validate required keys before proceeding (using keys from _validate_syllabus_structure)
@@ -678,14 +756,6 @@ def save_syllabus(state: SyllabusState) -> Dict[str, Any]:
                 "error_message": error_msg,
             }
 
-        if not isinstance(topic_str, str) or not isinstance(level_str, str):
-            error_msg = f"Syllabus 'topic' or 'level' is not a string: {syllabus_dict}"
-            logger.error(error_msg)
-            return {
-                "syllabus_saved": False,
-                "saved_uid": None,
-                "error_message": error_msg,
-            }
         if not isinstance(modules_data, list):
             error_msg = f"Syllabus 'modules' is not a list: {syllabus_dict}"
             logger.error(error_msg)
@@ -719,11 +789,19 @@ def save_syllabus(state: SyllabusState) -> Dict[str, Any]:
                 }
 
         # Prepare defaults for update_or_create
+        # Prepare defaults for update_or_create, prioritizing values from the generated content
         defaults = {
-            "user_entered_topic": user_entered_topic,
-            # Add other fields from syllabus_dict that map directly to Syllabus model fields
-            # 'duration': syllabus_dict.get('duration'), # Removed: Not on Syllabus model
-            # 'learning_objectives': syllabus_dict.get('learning_objectives', []), # Removed: Not on Syllabus model
+            # Use topic/level from generated content if available, else fallback to state values
+            "topic": syllabus_dict.get("topic", original_topic),
+            "level": syllabus_dict.get("level", level_str),
+            # "user": user_obj, # REMOVED - User is a lookup key, not a default to be updated
+            # user_entered_topic should generally not be changed by generation
+            "user_entered_topic": user_entered_topic_from_state,
+            # Add other fields from syllabus_dict that exist on the Syllabus model
+            # "duration": syllabus_dict.get("duration"), # REMOVED - Not a field on Syllabus model
+            # "learning_objectives": syllabus_dict.get("learning_objectives", []), # REMOVED - Not a field on Syllabus model
+            # Add other potential fields here if the model supports them, e.g.:
+            # "syllabus_json": json.dumps(syllabus_dict),
         }
 
         # Use UID from state if available for update, otherwise create based on topic/level/user
@@ -732,22 +810,29 @@ def save_syllabus(state: SyllabusState) -> Dict[str, Any]:
             logger.info(
                 f"Attempting to update existing syllabus with UID: {uid_to_update}"
             )
+            # Update existing record identified by UID, applying all defaults
             syllabus_instance, created = (
                 Syllabus.objects.update_or_create(  # pylint: disable=no-member
                     syllabus_id=uid_to_update,  # Use UID for lookup
-                    defaults={
-                        "topic": topic_str,
-                        "level": level_str,
-                        "user": user_obj,
-                        **defaults,  # Include other defaults
-                    },
+                    defaults=defaults,  # Apply the full defaults dict prepared above
                 )
             )
+            if created:
+                # This case should ideally not happen if uid_to_update was valid
+                logger.warning(
+                    f"Created syllabus with ID {uid_to_update} during an update attempt?"
+                )
         else:
-            logger.info("Attempting to create new syllabus.")
+            logger.info(
+                f"Attempting to find or create syllabus with Topic='{original_topic}', Level='{level_str}', User={user_obj}"
+            )
+            # Find based on original topic, level, user. Apply defaults if creating or updating.
             syllabus_instance, created = (
                 Syllabus.objects.update_or_create(  # pylint: disable=no-member
-                    topic=topic_str, level=level_str, user=user_obj, defaults=defaults
+                    topic=original_topic,
+                    level=level_str,
+                    user=user_obj,
+                    defaults=defaults,
                 )
             )
         action = "Created" if created else "Updated"

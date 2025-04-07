@@ -1,4 +1,5 @@
 """Views for the core application."""
+# pylint: disable=no-member
 
 from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required
@@ -6,7 +7,7 @@ from django.contrib.auth.forms import UserCreationForm
 from django.contrib import messages
 from django.urls import reverse
 from django.db.models import Count, Q, F, Value, FloatField, Case, When # Import ORM tools
-from .models import Syllabus, UserProgress, Lesson # Import models
+from .models import Syllabus, UserProgress # Import models
 
 def index(request):
     """
@@ -16,7 +17,6 @@ def index(request):
     if request.user.is_authenticated:
         return redirect(reverse('dashboard')) # Use reverse without namespace
     # Render a simple index page for anonymous users
-    # We'll create this template next
     return render(request, 'core/index.html')
 
 @login_required # Decorator to ensure user is logged in

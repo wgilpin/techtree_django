@@ -2,23 +2,31 @@
 
 import json  # Import json module
 import logging
+import uuid
 from typing import Optional, cast
 
 from asgiref.sync import sync_to_async
-from django.conf import settings
 from django.contrib import messages  # Add messages framework
 from django.contrib.auth.decorators import login_required  # Add login_required
-from django.contrib.auth.models import User  # Import User for type casting
-from django.http import (HttpRequest, HttpResponse, HttpResponseBadRequest,
-                         JsonResponse)
-from django.shortcuts import redirect, render  # Add redirect
+from django.contrib.auth.models import User  # Import User directly
+from django.http import JsonResponse  # Add Http404
+from django.http import HttpRequest, HttpResponse, HttpResponseBadRequest
+from django.shortcuts import (  # Add redirect, get_object_or_404
+    get_object_or_404,
+    redirect,
+    render,
+)
 from django.urls import NoReverseMatch, reverse
 from django.views.decorators.http import require_GET, require_POST
 
+# Import difficulty constants
+from core.constants import DIFFICULTY_BEGINNER
 from core.exceptions import ApplicationError
-# Import the model for saving results
-from core.models import UserAssessment
+
 # Import Syllabus Service and Exceptions
+# Import the model for saving results
+from core.models import Syllabus  # Import Syllabus model from core app
+from core.models import UserAssessment
 from syllabus.services import SyllabusService
 
 # Import AI logic and state definition
@@ -105,7 +113,7 @@ async def start_assessment_view(request: HttpRequest, topic: str) -> JsonRespons
         )
         assessment_state["current_question_difficulty"] = question_results.get(
             "current_question_difficulty",
-            settings.ONBOARDING_DEFAULT_DIFFICULTY,  # Use setting
+            DIFFICULTY_BEGINNER,  # Use constant
         )
         assessment_state["questions_asked"] = question_results.get(
             "questions_asked", []
@@ -120,12 +128,14 @@ async def start_assessment_view(request: HttpRequest, topic: str) -> JsonRespons
             f"Assessment state initialized in session for user: {user_id}, topic: {topic}"
         )
 
+        # The first question is always number 1
         return JsonResponse(
             {
                 "search_status": assessment_state.get("search_completed", False),
                 "question": assessment_state.get("current_question"),
                 "difficulty": assessment_state.get("current_question_difficulty"),
                 "is_complete": False,
+                "question_number": 1,  # Add question number
             }
         )
 
@@ -206,9 +216,7 @@ async def submit_answer_view(
         )
         assessment_state["current_target_difficulty"] = eval_results.get(
             "current_target_difficulty",
-            assessment_state.get(
-                "current_target_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY
-            ),
+            assessment_state.get("current_target_difficulty", DIFFICULTY_BEGINNER),
         )
         # Note: consecutive_hard_correct_or_partial is also updated in eval_results now
         assessment_state["consecutive_hard_correct_or_partial"] = eval_results.get(
@@ -230,7 +238,7 @@ async def submit_answer_view(
                 "current_question", "Error"
             )
             assessment_state["current_question_difficulty"] = question_results.get(
-                "current_question_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY
+                "current_question_difficulty", DIFFICULTY_BEGINNER
             )
             assessment_state["questions_asked"] = question_results.get(
                 "questions_asked", assessment_state.get("questions_asked", [])
@@ -248,10 +256,13 @@ async def submit_answer_view(
                 request.session, "assessment_state", assessment_state
             )
 
+            # Calculate the number for the *next* question being sent
+            question_number = len(assessment_state.get("questions_asked", []))
             response_data = {
                 "is_complete": False,
                 "question": assessment_state.get("current_question"),
                 "difficulty": assessment_state.get("current_question_difficulty"),
+                "question_number": question_number,  # Add question number
                 # Explicitly handle None feedback
                 "feedback": assessment_state.get("feedback") or "",
             }
@@ -339,31 +350,52 @@ async def submit_answer_view(
                     f"Requesting syllabus generation for user {user.pk}: Topic='{topic}', Level='{level}'"
                 )
                 # Call the async service method directly
-                syllabus_data = await syllabus_service.get_or_generate_syllabus(
+                # The service now returns the Syllabus object directly
+                # Service returns the UUID directly
+                # Remove type hint and let it be inferred
+                syllabus_id = await syllabus_service.get_or_generate_syllabus(
                     topic=topic, level=level, user=user
                 )
-                syllabus_id = syllabus_data.get("syllabus_id")
-                logger.info(f"Syllabus service returned: {syllabus_data}")  # Added log
+                # No need to extract ID, it's already syllabus_id
+                logger.info(f"Syllabus service returned syllabus_id: {syllabus_id}")
 
                 if syllabus_id:
+                    # --- MODIFIED: Redirect to generating page instead of final syllabus ---
                     logger.info(
-                        f"Syllabus generated/found (ID: {syllabus_id}). Returning JSON with redirect URL."
-                    )  # Updated log
-                    messages.success(
-                        request,
-                        f"Assessment complete! Your syllabus for '{topic}' ({level}) is ready.",
-                    )  # Keep the message for next page load
-                    syllabus_url = reverse("syllabus:detail", args=[syllabus_id])
-                    # Return JSON instead of redirecting directly
-                    return JsonResponse(
-                        {
-                            "is_complete": True,
-                            "knowledge_level": assessment_state.get("knowledge_level"),
-                            "score": assessment_state.get("score"),
-                            "syllabus_url": syllabus_url,  # Provide URL for frontend redirect
-                            "feedback": "Assessment complete. Syllabus generated.",  # Optional feedback
-                        }
+                        f"Syllabus generation initiated (ID: {syllabus_id}). Returning JSON with generating page URL."
                     )
+                    # Don't set success message here, it will be lost on redirect.
+                    # The generating page or the final syllabus page should show success.
+
+                    try:
+                        # Generate URL for the intermediate loading page using syllabus_id
+                        generating_url = reverse(
+                            "onboarding:generating_syllabus", kwargs={"syllabus_id": syllabus_id}
+                        )
+                        logger.info(f"Generated generating_url: {generating_url}")
+
+                        # Return JSON with the URL to the generating page
+                        return JsonResponse(
+                            {
+                                "is_complete": True,  # Mark assessment as complete
+                                "knowledge_level": assessment_state.get(
+                                    "knowledge_level"
+                                ),
+                                "score": assessment_state.get("score"),
+                                "generating_url": generating_url,  # Provide URL for frontend redirect to loading page
+                                "feedback": "Assessment complete. Preparing your syllabus...",  # Update feedback
+                            }
+                        )
+                    except NoReverseMatch:
+                        logger.error(
+                            f"Could not reverse URL for generating_syllabus with syllabus_id='{syllabus_id}'"
+                        )
+                        messages.error(
+                            request,
+                            "Assessment complete, but could not prepare the syllabus generation page.",
+                        )
+                        return redirect(reverse("dashboard"))  # Fallback redirect
+                    # --- END MODIFICATION ---
                 else:
                     logger.error(
                         "Syllabus generation/retrieval finished but no syllabus_id returned. Redirecting to dashboard."
@@ -413,7 +445,7 @@ def assessment_page_view(request: HttpRequest, topic: str) -> HttpResponse:
     """
     # This view just renders the template, no async operations needed here
     try:
-        start_url = reverse("onboarding_start", kwargs={"topic": topic})
+        start_url = reverse("onboarding:onboarding_start", kwargs={"topic": topic})
     except NoReverseMatch:
         logger.error(f"Could not reverse URL for onboarding_start with topic: {topic}")
         return HttpResponseBadRequest("Invalid topic for assessment.")
@@ -431,7 +463,7 @@ def skip_assessment_view(request: HttpRequest) -> HttpResponse:
     """Handle the request to skip the onboarding assessment.
 
     Creates a placeholder UserAssessment record indicating the skip
-    and sets the knowledge level to 'beginner'. Redirects to the dashboard.
+    and sets the knowledge level to the beginner constant. Redirects to the dashboard.
     """
     # Cast request.user to User as login_required guarantees authentication
     user = cast(User, request.user)
@@ -443,7 +475,7 @@ def skip_assessment_view(request: HttpRequest) -> HttpResponse:
         UserAssessment.objects.create(  # pylint: disable=no-member
             user=user,  # type: ignore[misc]
             topic="Assessment Skipped",
-            knowledge_level="beginner",
+            knowledge_level=DIFFICULTY_BEGINNER,  # Use constant
             score=None,  # No score applicable
             question_history=None,
             response_history=None,
@@ -467,3 +499,140 @@ def skip_assessment_view(request: HttpRequest) -> HttpResponse:
         # Redirect back to dashboard even on error, as it's a safe fallback
         dashboard_url = reverse("dashboard")  # Use correct non-namespaced name
         return redirect(dashboard_url)
+
+
+# --- Syllabus Generation Loading/Polling Views ---
+
+
+@login_required
+@require_GET
+def generating_syllabus_view(
+    request: HttpRequest, syllabus_id: uuid.UUID
+) -> HttpResponse:
+    """Renders the page indicating syllabus generation is in progress."""
+    logger.info(f"Displaying generating syllabus page for syllabus_id='{syllabus_id}'")
+    syllabus = get_object_or_404(Syllabus, id=syllabus_id)
+
+    # Ensure the user requesting the page is the owner of the syllabus
+    # Cast user after login_required decorator guarantees authentication
+    # @login_required ensures request.user is authenticated User
+    if syllabus.user != request.user:
+        # Ensure syllabus.user is not None before accessing pk
+        owner_pk = cast(User, syllabus.user).pk if syllabus.user else "Unknown"  # type: ignore[attr-defined]
+        logger.warning(
+            f"User {request.user.pk} attempted to access generating page for syllabus {syllabus_id} owned by {owner_pk}"
+        )
+        messages.error(
+            request,
+            "You do not have permission to view this syllabus generation status.",
+        )
+        return redirect(reverse("dashboard"))
+
+    try:
+        # Generate the polling URL using the syllabus_id
+        poll_url = reverse("poll_syllabus_status", kwargs={"syllabus_id": syllabus_id})
+    except NoReverseMatch:
+        logger.error(
+            f"Could not reverse URL for poll_syllabus_status with syllabus_id={syllabus_id}"
+        )
+        messages.error(request, "Could not prepare syllabus generation status check.")
+        return redirect(reverse("dashboard"))
+
+    context = {
+        "syllabus": syllabus,  # Pass the whole syllabus object
+        "poll_url": poll_url,
+        "csrf_token": request.META.get(
+            "CSRF_COOKIE"
+        ),  # Pass CSRF token if needed by JS
+    }
+    return render(request, "onboarding/generating_syllabus.html", context)
+
+
+# @login_required # Cannot use decorator with async view, check manually
+@require_GET  # Or POST if CSRF protection is strictly needed for polling
+async def poll_syllabus_status_view(
+    request: HttpRequest, syllabus_id: uuid.UUID
+) -> JsonResponse:
+    """Poll endpoint to check the status of syllabus generation using its ID."""
+    user = await request.auser()
+    # auser() handles authentication, returns User or AnonymousUser
+    if not user.is_authenticated:
+        logger.warning(
+            "Unauthenticated user attempted to poll syllabus status via auser."
+        )
+        # Return 401 or 403 based on whether login is strictly required for polling
+        return JsonResponse(
+            {"status": "error", "message": "Authentication required."}, status=401
+        )
+
+    # No need to cast/assert after using auser() and checking is_authenticated
+    # user is now guaranteed to be an authenticated User object
+    logger.debug(
+        f"Polling syllabus status for user {user.pk}, syllabus_id='{syllabus_id}'"
+    )
+
+    try:
+        # Fetch the syllabus asynchronously using sync_to_async with get_object_or_404
+        # Note: get_object_or_404 itself is sync, so wrap it.
+        aget_object_or_404 = sync_to_async(get_object_or_404)
+        # This will raise Http404 if not found, caught by Django's middleware
+        syllabus = await aget_object_or_404(Syllabus, id=syllabus_id)
+
+        # Check ownership
+        if syllabus.user != user:
+            # Ensure syllabus.user is not None before accessing pk
+            owner_pk = cast(User, syllabus.user).pk if syllabus.user else "Unknown"  # type: ignore[attr-defined]
+            logger.warning(
+                f"User {user.pk} attempted to poll status for syllabus {syllabus_id} owned by {owner_pk}"
+            )
+            return JsonResponse(
+                {"status": "error", "message": "Permission denied."}, status=403
+            )
+
+        logger.info(
+            f"Syllabus {syllabus_id} status for user {user.pk}: {syllabus.status}"
+        )
+
+        response_data = {"status": syllabus.status}
+
+        # If completed, include the URL to the syllabus detail page
+        # Use the nested StatusChoices class
+        # Compare status directly with string values
+        if (
+            syllabus.status == Syllabus.StatusChoices.COMPLETED.value
+        ):  # Or simply 'COMPLETED'
+            try:
+                # Assuming 'syllabus:detail' is the correct URL name in the syllabus app
+                syllabus_url = reverse("syllabus:detail", args=[syllabus.pk])
+                response_data["syllabus_url"] = syllabus_url
+                logger.info(
+                    f"Syllabus {syllabus_id} completed. Providing URL: {syllabus_url}"
+                )
+            except NoReverseMatch:
+                logger.error(
+                    f"Could not reverse syllabus detail URL for ID {syllabus.pk}"
+                )
+                # Still return completed status, but log the URL error
+                response_data["message"] = "Syllabus ready but URL generation failed."
+        # Use the nested StatusChoices class
+        # Compare status directly with string values
+        elif (
+            syllabus.status == Syllabus.StatusChoices.FAILED.value
+        ):  # Or simply 'FAILED'
+            logger.warning(f"Syllabus {syllabus_id} generation failed.")
+            # Optionally add more failure details if available on the model
+            response_data["message"] = "Syllabus generation failed."
+
+        return JsonResponse(response_data)
+
+    # Http404 is raised by get_object_or_404 if not found, handled by Django.
+    # Catch other potential errors during status check or URL reversal.
+    except Exception as e:
+        logger.error(
+            f"Error checking syllabus status for user {user.pk}, syllabus_id={syllabus_id}: {e}",
+            exc_info=True,
+        )
+        return JsonResponse(
+            {"status": "error", "message": f"Error checking status: {str(e)}"},
+            status=500,
+        )

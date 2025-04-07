@@ -1,13 +1,12 @@
 """Tests for the end_node node function."""
 
-import pytest
 from typing import cast
 
-from syllabus.ai.nodes import initialize_state, end_node
+from syllabus.ai.nodes import end_node, initialize_state
 from syllabus.ai.state import SyllabusState
 
-
 # --- Test end_node ---
+
 
 def test_end_node():
     """Test that the end node simply returns the state it receives."""

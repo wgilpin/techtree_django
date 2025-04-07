@@ -25,4 +25,10 @@ urlpatterns: list[URLPattern] = [
         views.generate_lesson_content_async,
         name="generate_content_async",
     ),
+    # URL to handle changing to a lower difficulty level
+    path(
+        "<uuid:syllabus_id>/change-difficulty/",
+        views.change_difficulty_view,
+        name="change_difficulty",
+    ),
 ]

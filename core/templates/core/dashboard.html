@@ -60,10 +60,10 @@
 
                 <div class="topic-suggestions" style="margin-top: 1.5rem;">
                     {# Link to the assessment page view #}
-                    <a href="{% url 'onboarding_assessment_page' topic='Python Programming' %}" class="primary-button" style="margin: 5px;">Python Programming</a>
-                    <a href="{% url 'onboarding_assessment_page' topic='Machine Learning' %}" class="primary-button" style="margin: 5px;">Machine Learning</a>
-                    <a href="{% url 'onboarding_assessment_page' topic='Web Development' %}" class="primary-button" style="margin: 5px;">Web Development</a>
-                    <a href="{% url 'onboarding_assessment_page' topic='Quantum Computing' %}" class="primary-button" style="margin: 5px;">Quantum Computing</a>
+                    <a href="{% url 'onboarding:onboarding_assessment_page' topic='Python Programming' %}" class="primary-button" style="margin: 5px;">Python Programming</a>
+                    <a href="{% url 'onboarding:onboarding_assessment_page' topic='Machine Learning' %}" class="primary-button" style="margin: 5px;">Machine Learning</a>
+                    <a href="{% url 'onboarding:onboarding_assessment_page' topic='Web Development' %}" class="primary-button" style="margin: 5px;">Web Development</a>
+                    <a href="{% url 'onboarding:onboarding_assessment_page' topic='Quantum Computing' %}" class="primary-button" style="margin: 5px;">Quantum Computing</a>
                 </div>
                  <div class="custom-topic" style="margin-top: 1.5rem;">
                      {# Form to navigate to assessment page via JS #}

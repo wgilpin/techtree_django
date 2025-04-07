@@ -3,6 +3,7 @@ import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from typing import Dict, Any
 from django.conf import settings # Import settings
+from core.constants import DIFFICULTY_BEGINNER, DIFFICULTY_ADVANCED # Import constants
 
 from onboarding.ai import TechTreeAI, AgentState, call_with_retry
 
@@ -108,7 +109,7 @@ def test_initialize_state(mock_init):
     assert state["topic"] == topic
     assert state["questions_asked"] == []
     # Assert other initial values based on initialize_state logic
-    assert state["knowledge_level"] == "beginner"
+    assert state["knowledge_level"] == DIFFICULTY_BEGINNER # Assert against constant
     assert state["current_target_difficulty"] == settings.ONBOARDING_DEFAULT_DIFFICULTY
 
 # Test is async but we'll mock the async method to make it testable synchronously
@@ -263,7 +264,7 @@ def test_calculate_final_assessment(mock_init, initial_state):
     final_assessment = result_state["final_assessment"]
     assert isinstance(final_assessment, dict)
     assert final_assessment["score"] == pytest.approx(80.0) # Score is percentage
-    assert final_assessment["knowledge_level"] == "advanced" # 80 >= 75
+    assert final_assessment["knowledge_level"] == DIFFICULTY_ADVANCED # Assert against constant
     assert final_assessment["topic"] == "Test Topic"
     assert final_assessment["questions"] == ["q1", "q2", "q3"]
     assert final_assessment["responses"] == initial_state["answers"]
@@ -279,5 +280,5 @@ def test_calculate_final_assessment_no_scores(mock_init, initial_state):
     assert "final_assessment" in result_state
     final_assessment = result_state["final_assessment"]
     assert final_assessment["score"] == 0
-    assert final_assessment["knowledge_level"] == "beginner"
+    assert final_assessment["knowledge_level"] == DIFFICULTY_BEGINNER # Assert against constant
     assert result_state["is_complete"] is True

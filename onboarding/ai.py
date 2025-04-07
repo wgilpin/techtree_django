@@ -10,6 +10,11 @@ import json
 from typing import TypedDict, List, Dict, Any, Optional
 
 from langchain_core.prompts import ChatPromptTemplate
+from core.constants import (
+    DIFFICULTY_BEGINNER,
+    DIFFICULTY_GOOD_KNOWLEDGE, # Changed from intermediate
+    DIFFICULTY_ADVANCED,
+)
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.tools.tavily_search import TavilySearchResults
 from django.conf import settings
@@ -121,7 +126,7 @@ class TechTreeAI:
         # Ensure all keys defined in AgentState are present
         return AgentState(
             topic=topic,
-            knowledge_level="beginner",  # Start assuming beginner
+            knowledge_level=DIFFICULTY_BEGINNER,  # Use constant display value
             questions_asked=[],
             question_difficulties=[],
             answers=[],
@@ -199,11 +204,15 @@ class TechTreeAI:
         target_difficulty = state.get(
             "current_target_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY
         )
-        # Map numeric difficulty to a descriptive name
-        difficulty_map = {1: "Beginner", 2: "Intermediate", 3: "Advanced"}
+        # Map numeric difficulty (assuming 1=Easy, 2=Medium, 3=Hard from settings) to display names
+        difficulty_map = {
+            1: DIFFICULTY_BEGINNER,
+            2: DIFFICULTY_GOOD_KNOWLEDGE,
+            3: DIFFICULTY_ADVANCED,
+        }
         difficulty_name = difficulty_map.get(
-            target_difficulty, "Intermediate"
-        )  # Default if somehow invalid
+            target_difficulty, DIFFICULTY_GOOD_KNOWLEDGE # Default if somehow invalid (use constant)
+        )
 
         # Format search results for the prompt context
         search_results_list = state.get("google_results", [])
@@ -213,7 +222,7 @@ class TechTreeAI:
 
         prompt_input = {
             "topic": state.get("topic", "Unknown Topic"),
-            "knowledge_level": state.get("knowledge_level", "beginner"),
+            "knowledge_level": state.get("knowledge_level", DIFFICULTY_BEGINNER), # Use constant
             "target_difficulty": target_difficulty,
             "difficulty_name": difficulty_name,
             "questions_asked_str": json.dumps(state.get("questions_asked", [])),
@@ -318,8 +327,8 @@ class TechTreeAI:
         # chain = prompt_obj | self.llm
 
         try:
-             # Option 2: Invoke LLM directly with formatted messages
-            response = self.llm.invoke(messages)
+            # Use call_with_retry with the manually formatted messages
+            response = await call_with_retry(self.llm, messages) # Use await and call_with_retry
             content = str(response.content).strip()
             logger.debug("Raw answer evaluation response: %s", content)
 
@@ -458,16 +467,16 @@ class TechTreeAI:
 
         # Check if assessment stopped due to 2 wrong at easiest level
         if consecutive_wrong_at_difficulty >= 2 and current_difficulty == min_difficulty:
-            final_level = "beginner"
-            logger.info("Assigning 'beginner' level due to stopping at easiest difficulty.")
+            final_level = DIFFICULTY_BEGINNER # Use constant
+            logger.info(f"Assigning '{DIFFICULTY_BEGINNER}' level due to stopping at easiest difficulty.")
         else:
             # Original score-based logic
             if score_percentage >= 75:
-                final_level = "advanced"
+                final_level = DIFFICULTY_ADVANCED # Use constant
             elif score_percentage >= 40:
-                final_level = "intermediate"
+                final_level = DIFFICULTY_GOOD_KNOWLEDGE # Use constant
             else:
-                final_level = "beginner"
+                final_level = DIFFICULTY_BEGINNER # Use constant
 
         logger.info(
             f"Final Assessment - Level: {final_level}, Score: {score_percentage:.2f}%"

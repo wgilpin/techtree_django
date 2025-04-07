@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Generating Your Syllabus{% endblock %}
+
+{% block content %}
+<div class="container text-center mt-5">
+    <h1>Preparing Your Custom Syllabus</h1>
+    {# Access attributes from the syllabus object passed in context #}
+    <p>Topic: <strong>{{ syllabus.topic }}</strong></p>
+    <p>Assessed Level: <strong>{{ syllabus.level }}</strong></p>
+    <p>Please wait while we tailor your learning path...</p>
+
+    <div class="spinner-border text-primary mt-4" role="status" style="width: 3rem; height: 3rem;">
+        <span class="visually-hidden">Loading...</span>
+    </div>
+
+    <div id="error-message" class="alert alert-danger mt-3" style="display: none;"></div>
+</div>
+
+{# Hidden inputs to store data needed for polling #}
+<input type="hidden" id="poll-url" value="{{ poll_url }}">
+<input type="hidden" id="csrf-token" value="{{ csrf_token }}">
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const pollUrl = document.getElementById('poll-url').value;
+    const csrfToken = document.getElementById('csrf-token').value;
+    const errorMessageDiv = document.getElementById('error-message');
+    let pollInterval; // Variable to hold the interval ID
+
+    function displayError(message) {
+        errorMessageDiv.textContent = `Error: ${message}. Please try refreshing or contact support.`;
+        errorMessageDiv.style.display = 'block';
+        // Stop polling on error
+        if (pollInterval) {
+            clearInterval(pollInterval);
+        }
+        // Optionally hide the spinner on error
+        const spinner = document.querySelector('.spinner-border');
+        if (spinner) {
+            spinner.style.display = 'none';
+        }
+    }
+
+    async function pollSyllabusStatus() {
+        console.log("Polling syllabus status...");
+        try {
+            const response = await fetch(pollUrl, {
+                method: 'GET', // Or POST if needed, adjust view accordingly
+                headers: {
+                    'Accept': 'application/json',
+                    'X-CSRFToken': csrfToken // Include CSRF if using POST or required by view
+                }
+            });
+
+            if (!response.ok) {
+                let errorMsg = `Polling failed with status: ${response.status}`;
+                 try {
+                     const errorData = await response.json();
+                     errorMsg = errorData.error || errorMsg;
+                 } catch(e) { /* Ignore if response is not JSON */ }
+                throw new Error(errorMsg);
+            }
+
+            const data = await response.json();
+            console.log("Poll response:", data);
+
+            if (data.error) {
+                throw new Error(data.error);
+            }
+
+            // Check against the status constants defined in the Syllabus model
+            if (data.status === 'COMPLETED' && data.syllabus_url) {
+                console.log(`Syllabus COMPLETED! Redirecting to: ${data.syllabus_url}`);
+                clearInterval(pollInterval); // Stop polling
+                window.location.href = data.syllabus_url; // Redirect
+            } else if (data.status === 'FAILED') {
+                console.error(`Syllabus generation FAILED. Message: ${data.message}`);
+                clearInterval(pollInterval); // Stop polling
+                displayError(data.message || 'Syllabus generation failed.');
+            } else if (data.status === 'PENDING' || data.status === 'GENERATING') {
+                // Continue polling for these statuses
+                console.log(`Syllabus generation status: ${data.status}...`);
+            } else if (data.status === 'error') { // Handle explicit error status from view
+                 console.error(`Polling endpoint returned error status. Message: ${data.message}`);
+                 clearInterval(pollInterval); // Stop polling
+                 displayError(data.message || 'An error occurred while checking status.');
+            }
+             else {
+                 // Unexpected status from the backend
+                 console.warn("Received unexpected status:", data.status);
+                 // Optionally treat unexpected status as an error or continue polling cautiously
+                 // displayError(`Received unexpected status: ${data.status}`);
+                 // clearInterval(pollInterval);
+            }
+
+        } catch (error) {
+            console.error('Error polling syllabus status:', error);
+            displayError(error.message || 'An unknown error occurred while checking syllabus status.');
+            // Stop polling on error
+            if (pollInterval) {
+                clearInterval(pollInterval);
+            }
+        }
+    }
+
+    // Start polling immediately and then every 5 seconds
+    pollSyllabusStatus(); // Initial check
+    pollInterval = setInterval(pollSyllabusStatus, 5000); // Poll every 5 seconds
+
+});
+</script>
+{% endblock %}

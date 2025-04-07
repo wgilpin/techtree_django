@@ -1,7 +1,6 @@
 """Views for the syllabus app."""
 
 import logging
-from typing import Dict
 
 # Removed sync_to_async import
 # Removed sync_to_async import
@@ -27,7 +26,6 @@ def syllabus_landing(request: HttpRequest) -> HttpResponse:
     """
     if not request.user.is_authenticated:
         return redirect(f"{reverse('login')}?next={request.path}")
-    # TODO: Implement logic to list user's syllabi or show creation form
     context = {"message": "Syllabus Landing Page - To be implemented"}
     return render(request, "syllabus/landing.html", context)
 
@@ -61,20 +59,12 @@ async def generate_syllabus_view(request: HttpRequest) -> HttpResponse:
                 f"Generating syllabus for user {user.pk}: Topic='{topic}', Level='{level}'"
             )
             # Call the async service method
-            syllabus_data = await syllabus_service.get_or_generate_syllabus(
+            # Call the async service method, which now returns a UUID
+            syllabus_uuid = await syllabus_service.get_or_generate_syllabus(
                 topic=topic, level=level, user=user
             )
-            syllabus_id = syllabus_data.get("syllabus_id")
-            if syllabus_id:
-                # Redirect to the detail view of the newly created/found syllabus
-                return redirect(reverse("syllabus:detail", args=[syllabus_id]))
-            else:
-                # Handle error: syllabus ID missing after generation
-                logger.error("Syllabus ID missing after generation/retrieval.")
-                # Add error message
-                return redirect(
-                    reverse("syllabus:landing")
-                )  # Or render form with error
+            # Redirect to the onboarding page to show generation progress
+            return redirect("onboarding:generating_syllabus", syllabus_id=syllabus_uuid)
 
         except ApplicationError as e:
             logger.error(f"Error generating syllabus: {e}", exc_info=True)

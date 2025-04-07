@@ -11,6 +11,7 @@
     <div id="assessment-area">
         <div id="question-area" style="margin-bottom: 1.5rem;">
             <p style="font-weight: bold; margin-bottom: 0.5rem;">Question:</p>
+            <p id="question-counter" style="font-size: 0.9em; color: #666; text-align: right; margin-bottom: 0.5rem;">?</p>
             <p id="question-text">Loading first question...</p>
             <p style="font-size: 0.9em; color: #666;">Difficulty: <span id="question-difficulty">...</span></p>
         </div>
@@ -27,9 +28,9 @@
 
         <button id="submit-answer-btn" class="primary-button" style="width: 100%;">Submit Answer</button>
     </div>
-    <form action="{% url 'skip_assessment' %}" method="post" style="text-align: center; margin-top: 1rem; margin-bottom: 1rem;">
+    <form action="{% url 'onboarding:skip_assessment' %}" method="post" style="text-align: center; margin-top: 1rem; margin-bottom: 1rem;">
         {% csrf_token %}
-        <button type="submit" class="secondary-button" style="padding: 0.5rem 1rem; border: 1px solid #ccc; background-color: #eee; border-radius: 4px; cursor: pointer;">Skip Assessment</button>
+        <button type="submit" class="secondary-button" style="padding: 0.5rem 1rem; border: 1px solid #ccc; background-color: #bbb; border-radius: 4px; cursor: pointer;">Skip Assessment</button>
     </form>
 
     <div id="result-area" style="display: none; text-align: center; margin-top: 2rem; padding: 1.5rem; border: 1px solid var(--primary-color); border-radius: 8px; background-color: #e8f5e9;">
@@ -47,7 +48,7 @@
     {# Hidden input to store the start URL provided by the view that renders this template #}
     <input type="hidden" id="start-assessment-url" value="{{ start_url|default:'' }}">
     {# URL for submitting answers #}
-    <input type="hidden" id="submit-answer-url" value="{% url 'onboarding_submit' %}">
+    <input type="hidden" id="submit-answer-url" value="{% url 'onboarding:onboarding_submit' %}">
     {# CSRF token for POST requests #}
     {% csrf_token %}
 
@@ -74,6 +75,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const resultScore = document.getElementById('result-score');
     const errorArea = document.getElementById('error-area');
     const errorText = document.getElementById('error-text');
+    const questionCounter = document.getElementById('question-counter'); // Added
 
     const startUrl = document.getElementById('start-assessment-url').value;
     const submitUrl = document.getElementById('submit-answer-url').value;
@@ -95,14 +97,15 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateAssessmentUI(data) {
         hideError();
         if (data.is_complete) {
-            // NEW: Check for syllabus URL and redirect if present
-            if (data.syllabus_url) {
-                console.log(`Assessment complete. Redirecting to syllabus: ${data.syllabus_url}`);
-                window.location.href = data.syllabus_url;
+            questionCounter.style.display = 'none'; // Hide counter on completion
+            // --- MODIFIED: Check for generating_url and redirect ---
+            if (data.generating_url) {
+                console.log(`Assessment complete. Redirecting to generating page: ${data.generating_url}`);
+                window.location.href = data.generating_url; // Redirect to the loading page
                 return; // Stop further UI updates as we are redirecting
             } else {
-                // Fallback: Show completion message if no syllabus URL (e.g., error during generation)
-                console.log("Assessment complete, but no syllabus URL provided. Showing results area.");
+                // Fallback: Show completion message if no generating_url (e.g., error before generation started)
+                console.log("Assessment complete, but could not start syllabus generation. Showing results area.");
                 assessmentArea.style.display = 'none';
                 resultTopic.textContent = currentTopic;
                 resultLevel.textContent = data.knowledge_level || 'N/A';
@@ -114,6 +117,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
         } else {
+            // Update question counter
+            if (data.question_number) {
+                questionCounter.textContent = `Question ${data.question_number} of 10`;
+                questionCounter.style.display = 'block';
+            } else {
+                questionCounter.style.display = 'none'; // Hide if number not available
+            }
+
             questionText.textContent = data.question || 'Error: No question received.';
             questionDifficulty.textContent = data.difficulty || 'N/A';
             userAnswerInput.value = ''; // Clear previous answer
@@ -128,7 +139,7 @@ document.addEventListener('DOMContentLoaded', function() {
             userAnswerInput.focus();
         }
         submitButton.disabled = false;
-        submitButton.textContent = 'Submit Answer';
+        submitButton.innerHTML = 'Submit Answer'; // Reset button text and remove spinner
     }
 
     async function startAssessment() {
@@ -183,7 +194,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         console.log(`Submitting answer: ${answer}`);
         submitButton.disabled = true;
-        submitButton.textContent = 'Processing...';
+        submitButton.innerHTML = '<span class="spinner"></span> Thinking'; // Add spinner and change text
         hideError();
         feedbackArea.style.display = 'none'; // Hide old feedback
 
@@ -222,7 +233,7 @@ document.addEventListener('DOMContentLoaded', function() {
         } catch (error) {
             console.error('Error submitting answer:', error);
             displayError(error.message || 'Could not submit answer.');
-            submitButton.textContent = 'Submit Answer'; // Reset button text
+            submitButton.innerHTML = 'Submit Answer'; // Reset button text and remove spinner
         }
     }
 

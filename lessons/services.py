@@ -29,6 +29,7 @@ from core.models import (
     UserProgress,
     ConversationHistory,
 )
+from core.constants import DIFFICULTY_VALUES
 from syllabus.ai.utils import call_with_retry  # Re-use retry logic
 from .ai.prompts import GENERATE_LESSON_CONTENT_PROMPT, LATEX_FORMATTING_INSTRUCTIONS
 from .ai.lesson_graph import LessonInteractionGraph  # Import the graph
@@ -149,9 +150,22 @@ def get_or_create_lesson_content(lesson: Lesson) -> Optional[LessonContent]:
             logger.info("LLM initialized successfully.")
 
             # 3. Format Prompt
+            # Calculate target word count based on difficulty level
+            difficulty_value = DIFFICULTY_VALUES.get(level)
+            if difficulty_value is None:
+                logger.warning(
+                    "Difficulty level '%s' not found in DIFFICULTY_VALUES. Using default word count.",
+                    level
+                )
+                # Default to ~400 words (similar to Early Learner) if level is unknown
+                word_count = 400
+            else:
+                word_count = (difficulty_value + 1) * 200
+
             prompt_input = {
                 "topic": topic,
-                "level": level,
+                "level_name": level, # Use the original level value as the name
+                "word_count": word_count,
                 "lesson_title": lesson_title,
                 "syllabus_structure_json": syllabus_structure_json,
                 "latex_formatting_instructions": LATEX_FORMATTING_INSTRUCTIONS,

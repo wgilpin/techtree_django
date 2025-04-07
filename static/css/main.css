@@ -985,6 +985,20 @@ label {
     100% { transform: rotate(360deg); }
 }
 
+/* Spinner specifically for buttons */
+button .spinner,
+.primary-button .spinner {
+    width: 1em; /* Size relative to button font size */
+    height: 1em;
+    border: 2px solid rgba(255, 255, 255, 0.3); /* Lighter border for contrast */
+    border-left-color: white; /* Make spinner visible on colored button */
+    border-radius: 50%;
+    display: inline-block;
+    vertical-align: text-bottom; /* Align with text */
+    margin-right: 0.5em; /* Space between spinner and text */
+    animation: spin 1s linear infinite; /* Use linear for smoother spin */
+}
+
 /* Markdown Content Styling */
 .markdown-content h1,
 .markdown-content h2,

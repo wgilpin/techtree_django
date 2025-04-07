@@ -1,5 +1,7 @@
 """Tests for the core Django app."""
 
+# pylint: disable=no-member
+
 from django.test import TestCase
 from django.utils import timezone
 from django.urls import reverse
@@ -22,9 +24,7 @@ class CoreModelTests(TestCase):
     @classmethod
     def setUpTestData(cls):
         """Set up non-modified objects used by all test methods."""
-        cls.user = User.objects.create_user(
-            username="testuser", password="password123"
-        )
+        cls.user = User.objects.create_user(username="testuser", password="password123")
         cls.assessment = UserAssessment.objects.create(
             user=cls.user, topic="Python Basics", knowledge_level="Intermediate"
         )
@@ -38,18 +38,19 @@ class CoreModelTests(TestCase):
             module=cls.module, title="Variables", lesson_index=1
         )
         cls.lesson_content = LessonContent.objects.create(
-            lesson=cls.lesson, content={"type": "text", "value": "Variables store data."}
+            lesson=cls.lesson,
+            content={"type": "text", "value": "Variables store data."},
         )
         cls.user_progress = UserProgress.objects.create(
             user=cls.user,
             syllabus=cls.syllabus,
             module_index=cls.module.module_index,
             lesson_index=cls.lesson.lesson_index,
-            lesson=cls.lesson, # Keep lesson FK for easier access if needed
+            lesson=cls.lesson,  # Keep lesson FK for easier access if needed
             status="completed",
         )
         # Need timezone for default timestamp comparison later
-        from django.utils import timezone
+
         cls.conversation = ConversationHistory.objects.create(
             progress=cls.user_progress,
             role="user",
@@ -105,9 +106,7 @@ class CoreModelTests(TestCase):
         self.assertEqual(self.user_progress.lesson_index, 1)
         self.assertEqual(self.user_progress.lesson, self.lesson)
         self.assertEqual(self.user_progress.status, "completed")
-        expected_str = (
-            f"Progress for {self.user.username} on Lesson: {self.lesson.title} (completed)"
-        )
+        expected_str = f"Progress for {self.user.username} on Lesson: {self.lesson.title} (completed)"
         self.assertEqual(str(self.user_progress), expected_str)
 
     def test_conversation_history_creation(self):
@@ -115,15 +114,16 @@ class CoreModelTests(TestCase):
         self.assertEqual(self.conversation.progress, self.user_progress)
         self.assertEqual(self.conversation.role, "user")
         self.assertEqual(self.conversation.content, "User message")
-        self.assertEqual(self.conversation.message_type, "chat") # Check default
+        self.assertEqual(self.conversation.message_type, "chat")  # Check default
         # Check timestamp is recent (within a tolerance)
-        self.assertLess((timezone.now() - self.conversation.timestamp).total_seconds(), 5)
+        self.assertLess(
+            (timezone.now() - self.conversation.timestamp).total_seconds(), 5
+        )
         expected_str = (
             f"{self.conversation.role} ({self.conversation.message_type}) at "
             f"{self.conversation.timestamp}: {self.conversation.content[:50]}..."
         )
         self.assertEqual(str(self.conversation), expected_str)
-
 
 
 class CoreViewTests(TestCase):
@@ -133,14 +133,12 @@ class CoreViewTests(TestCase):
         """Set up the test client and a user."""
         self.client = Client()
         self.user = User.objects.create_user(
-            username='testuser_view',
-            password='password123',
-            email='test@example.com'
+            username="testuser_view", password="password123", email="test@example.com"
         )
-        self.register_url = reverse('register')
-        self.login_url = reverse('login')
-        self.dashboard_url = reverse('dashboard')
-        self.index_url = reverse('index')
+        self.register_url = reverse("register")
+        self.login_url = reverse("login")
+        self.dashboard_url = reverse("dashboard")
+        self.index_url = reverse("index")
 
     def test_index_view_status_code(self):
         """Test the index view returns a 200 status code."""
@@ -150,65 +148,69 @@ class CoreViewTests(TestCase):
     def test_index_view_uses_correct_template(self):
         """Test the index view uses the correct template."""
         response = self.client.get(self.index_url)
-        self.assertTemplateUsed(response, 'core/index.html')
+        self.assertTemplateUsed(response, "core/index.html")
 
     def test_dashboard_view_redirects_unauthenticated(self):
         """Test the dashboard view redirects if user is not logged in."""
         response = self.client.get(self.dashboard_url)
-        self.assertRedirects(response, f'{self.login_url}?next={self.dashboard_url}')
+        self.assertRedirects(response, f"{self.login_url}?next={self.dashboard_url}")
 
     def test_dashboard_view_authenticated(self):
         """Test the dashboard view for an authenticated user."""
-        self.client.login(username='testuser_view', password='password123')
+        self.client.login(username="testuser_view", password="password123")
         response = self.client.get(self.dashboard_url)
         self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'core/dashboard.html')
-        self.assertContains(response, 'Welcome, testuser_view') # Check if username is displayed
+        self.assertTemplateUsed(response, "core/dashboard.html")
+        self.assertContains(
+            response, "Welcome, testuser_view"
+        )  # Check if username is displayed
 
     def test_register_view_get(self):
         """Test the register view returns 200 for GET requests."""
         response = self.client.get(self.register_url)
         self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'registration/register.html')
+        self.assertTemplateUsed(response, "registration/register.html")
 
     def test_register_view_post_success(self):
         """Test successful user registration via POST request."""
         user_data = {
-            'username': 'newuser',
-            'email': 'new@example.com', # Note: UserCreationForm doesn't handle email by default
-            'password1': 'newpassword123',
-            'password2': 'newpassword123',
+            "username": "newuser",
+            "email": "new@example.com",  # Note: UserCreationForm doesn't handle email by default
+            "password1": "newpassword123",
+            "password2": "newpassword123",
         }
         response = self.client.post(self.register_url, user_data)
         # Should redirect to login page after successful registration
         self.assertRedirects(response, self.login_url)
         # Check if the user was actually created
-        self.assertTrue(User.objects.filter(username='newuser').exists())
+        self.assertTrue(User.objects.filter(username="newuser").exists())
 
     def test_register_view_post_password_mismatch(self):
         """Test user registration failure with mismatched passwords."""
         user_data = {
-            'username': 'anotheruser',
-            'email': 'another@example.com', # Note: UserCreationForm doesn't handle email by default
-            'password1': 'password123',
-            'password2': 'differentpassword',
+            "username": "anotheruser",
+            "email": "another@example.com",  # Note: UserCreationForm doesn't handle email by default
+            "password1": "password123",
+            "password2": "differentpassword",
         }
         response = self.client.post(self.register_url, user_data)
-        self.assertEqual(response.status_code, 200) # Should re-render the form
-        self.assertTemplateUsed(response, 'registration/register.html')
+        self.assertEqual(response.status_code, 200)  # Should re-render the form
+        self.assertTemplateUsed(response, "registration/register.html")
         # UserCreationForm's error message for password mismatch
-        self.assertContains(response, "The two password fields didn’t match.") # Use Unicode apostrophe
-        self.assertFalse(User.objects.filter(username='anotheruser').exists())
+        self.assertContains(
+            response, "The two password fields didn’t match."
+        )  # Use Unicode apostrophe
+        self.assertFalse(User.objects.filter(username="anotheruser").exists())
 
     def test_register_view_post_existing_username(self):
         """Test user registration failure with an existing username."""
         user_data = {
-            'username': 'testuser_view', # Existing username from setUp
-            'email': 'unique@example.com', # Note: UserCreationForm doesn't handle email by default
-            'password1': 'password123',
-            'password2': 'password123',
+            "username": "testuser_view",  # Existing username from setUp
+            "email": "unique@example.com",  # Note: UserCreationForm doesn't handle email by default
+            "password1": "password123",
+            "password2": "password123",
         }
         response = self.client.post(self.register_url, user_data)
         self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'registration/register.html')
-        self.assertContains(response, 'A user with that username already exists.')
+        self.assertTemplateUsed(response, "registration/register.html")
+        self.assertContains(response, "A user with that username already exists.")

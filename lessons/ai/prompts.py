@@ -42,12 +42,12 @@ Use LaTeX for mathematical formulas with the following guidelines:
 Always ensure proper nesting of environments and correct syntax.
 """
 
-# TODO: Refine this prompt based on actual model needs and available context
 GENERATE_LESSON_CONTENT_PROMPT = PromptTemplate.from_template(
     """
 You are an expert educator AI tasked with creating detailed lesson content.
 The overall topic is: {topic}
-The target audience level is: {level}
+The target audience level is: {level_name}
+Target Length: Approximately {word_count} words.
 
 The lesson you need to generate content for is: "{lesson_title}"
 This lesson is part of a larger syllabus structured as follows:
@@ -56,7 +56,7 @@ This lesson is part of a larger syllabus structured as follows:
 ```
 
 Please generate the main exposition content for this specific lesson ("{lesson_title}").
-Focus on explaining the core concepts clearly and concisely for the specified level ({level}).
+Focus on explaining the core concepts clearly and concisely for the specified level ({level_name}). Aim for a length of roughly {word_count} words.
 The content should be engaging and informative.
 Assume the user has knowledge from previous lessons in the syllabus.
 Structure the content logically with clear headings or sections where appropriate.

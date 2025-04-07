@@ -5,14 +5,20 @@
 import json  # Move json import up
 import logging
 import re
+import uuid
 from typing import TYPE_CHECKING, Optional
 
+from asgiref.sync import sync_to_async
+from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils.safestring import mark_safe  # For async view
-from django.views.decorators.http import require_POST  # Import require_POST
+from django.views.decorators.http import require_GET, require_POST  # Import require_GET
 
+from core.constants import get_lower_difficulty
 from core.models import (
     ConversationHistory,
     Lesson,
@@ -21,6 +27,7 @@ from core.models import (
     Syllabus,
     UserProgress,
 )
+from syllabus.services import SyllabusService  # Import syllabus service
 
 from . import services  # Import the services module
 from .templatetags.markdown_extras import markdownify  # Import markdownify
@@ -29,6 +36,8 @@ if TYPE_CHECKING:
     from django.contrib.auth.models import User  # type: ignore[attr-defined]
 
 logger = logging.getLogger(__name__)  # Ensure logger is initialized
+
+syllabus_service = SyllabusService()  # Instantiate service
 
 
 def clean_exposition_string(text: Optional[str]) -> Optional[str]:
@@ -41,11 +50,10 @@ def clean_exposition_string(text: Optional[str]) -> Optional[str]:
         # Decode standard Python unicode escapes (\uXXXX, \xXX)
         # Using 'latin-1' to handle potential byte values mixed with unicode escapes
         # and 'ignore' errors to skip problematic sequences.
-        text_before_decode = cleaned_text
-        logger.debug("clean_exposition_string: Text BEFORE unicode_escape decode: %r", text_before_decode)
         # Use 'raw_unicode_escape' which only handles \uXXXX and \UXXXXXXXX, leaving other backslashes alone.
-        cleaned_text = cleaned_text.encode('latin-1', errors='ignore').decode('raw_unicode_escape', errors='ignore')
-        logger.debug("clean_exposition_string: Text AFTER unicode_escape decode: %r", cleaned_text)
+        cleaned_text = cleaned_text.encode("latin-1", errors="ignore").decode(
+            "raw_unicode_escape", errors="ignore"
+        )
         # Alternative: cleaned_text = bytes(text, "utf-8").decode("unicode_escape")
     except Exception as e:
         logger.warning("Failed to decode unicode escapes in exposition: %s", e)
@@ -55,10 +63,12 @@ def clean_exposition_string(text: Optional[str]) -> Optional[str]:
 
     # Fix: \u0007pprox -> \approx (where \u0007 might be a bell char or similar artifact)
     # This handles the case where the unicode decoding might not have fixed it.
-    cleaned_text = cleaned_text.replace("\u0007pprox", r"\approx") # Use raw string for \approx
+    cleaned_text = cleaned_text.replace(
+        "\u0007pprox", r"\approx"
+    )  # Use raw string for \approx
 
     # Fix: \x08egin{ -> \begin{ (Backspace artifact)
-    cleaned_text = cleaned_text.replace("\x08egin{", r"\begin{") # Use raw string
+    cleaned_text = cleaned_text.replace("\x08egin{", r"\begin{")  # Use raw string
 
     # Fix: â€“ -> – (common Mojibake for en-dash)
     cleaned_text = cleaned_text.replace("â€“", "–")
@@ -69,7 +79,6 @@ def clean_exposition_string(text: Optional[str]) -> Optional[str]:
     # Fix: \\mu -> \mu, \\alpha -> \alpha, etc. (Extra backslash before greek letters)
     # Using regex to be more general for common LaTeX commands
     cleaned_text = re.sub(r"\\\\([a-zA-Z]+)", r"\\\1", cleaned_text)
-
 
     # Add other specific replacements if needed based on observed errors
 
@@ -114,14 +123,17 @@ def lesson_detail(
         try:
             all_lesson_pks = list(
                 Lesson.objects.filter(module__syllabus=syllabus)
-                .order_by('module__module_index', 'lesson_index')
-                .values_list('pk', flat=True)
+                .order_by("module__module_index", "lesson_index")
+                .values_list("pk", flat=True)
             )
             absolute_lesson_number = all_lesson_pks.index(lesson.pk) + 1
         except (ValueError, Exception) as e:
             logger.error(
                 "Failed to calculate absolute_lesson_number for lesson %s in syllabus %s: %s",
-                lesson.pk, syllabus.pk, e, exc_info=True
+                lesson.pk,
+                syllabus.pk,
+                e,
+                exc_info=True,
             )
             # Proceed without absolute number if calculation fails
 
@@ -160,11 +172,14 @@ def lesson_detail(
             # This satisfies type checking and provides the necessary attributes for the template.
             welcome_message_instance = ConversationHistory(
                 role="assistant",
-                content=welcome_message_content
+                content=welcome_message_content,
                 # No need to set progress or timestamp as it's not saved and template doesn't use them here.
             )
             conversation_history.insert(0, welcome_message_instance)
-            logger.info("Prepended initial welcome message to empty conversation history for lesson %s.", lesson.pk)
+            logger.info(
+                "Prepended initial welcome message to empty conversation history for lesson %s.",
+                lesson.pk,
+            )
         # --- End Welcome Message ---
 
         # Extract exposition string only if content already exists and is valid
@@ -185,10 +200,12 @@ def lesson_detail(
                         "exposition"
                     )  # Get value or None
                     if (
-                        exposition_value
+                        exposition_value  # Restore the condition check
                     ):  # Check if exposition_value is not None and not empty string
                         # Clean the extracted exposition string
-                        exposition_content_value = clean_exposition_string(exposition_value)
+                        exposition_content_value = clean_exposition_string(
+                            exposition_value
+                        )
                     else:
                         # Handle case where exposition key exists but value is None or empty string
                         logger.warning(
@@ -221,7 +238,7 @@ def lesson_detail(
             "title": f"Lesson: {lesson.title}",
             # 'lesson_content': lesson_content, # No longer needed directly in template context
             "exposition_content": exposition_content_value,  # Pass the extracted string value or None
-            "absolute_lesson_number": absolute_lesson_number, # Add absolute index calculated above
+            "absolute_lesson_number": absolute_lesson_number,  # Add absolute index calculated above
             "conversation_history": conversation_history,
             "lesson_state_json": (
                 json.dumps(progress.lesson_state_json)
@@ -465,7 +482,9 @@ def generate_lesson_content_async(
 
             if exposition_markdown:
                 # Clean the markdown string before passing to markdownify
-                cleaned_exposition_markdown = clean_exposition_string(exposition_markdown)
+                cleaned_exposition_markdown = clean_exposition_string(
+                    exposition_markdown
+                )
                 # Use the markdownify function from templatetags for consistent processing
                 html_content = markdownify(cleaned_exposition_markdown)
                 logger.info(
@@ -515,3 +534,93 @@ def generate_lesson_content_async(
         return JsonResponse(
             {"status": "error", "error": "An unexpected error occurred."}, status=500
         )
+
+
+# @login_required # Cannot use with async view, check manually
+@require_GET  # Use GET as it's triggered by a link click
+async def change_difficulty_view(
+    request: HttpRequest, syllabus_id: uuid.UUID
+) -> HttpResponse:  # Make async
+    """Handles the request to switch to a lower difficulty syllabus."""
+    user = await request.auser()  # Get user asynchronously
+    if not user.is_authenticated:
+        # Handle unauthenticated user (e.g., redirect to login)
+        messages.error(request, "You must be logged in to change syllabus difficulty.")
+        # Assuming LOGIN_URL is set in settings
+        return redirect(settings.LOGIN_URL + "?next=" + request.path)
+
+    logger.info(
+        f"User {user.pk} requested difficulty change for syllabus {syllabus_id}"
+    )
+
+    try:
+        # Fetch the current syllabus asynchronously
+        # Fetch the current syllabus asynchronously now that view is async
+        # user is guaranteed to be authenticated here
+        current_syllabus = await sync_to_async(Syllabus.objects.get)(
+            pk=syllabus_id, user=user
+        )  # Await the call
+
+    except Syllabus.DoesNotExist:
+        logger.warning(f"Syllabus {syllabus_id} not found for user {user.pk}")
+        messages.error(request, "Could not find the specified syllabus.")
+        return redirect(reverse("dashboard"))
+    except Exception as e:
+        logger.error(f"Error fetching syllabus {syllabus_id}: {e}", exc_info=True)
+        messages.error(request, "An error occurred while fetching syllabus details.")
+        return redirect(reverse("dashboard"))
+
+    # Now current_syllabus is correctly typed as Syllabus
+    current_level = current_syllabus.level
+    topic = current_syllabus.topic
+
+    # Determine the next lower level using the utility function
+    new_level = get_lower_difficulty(current_level)
+    if new_level is None:
+        logger.warning(
+            f"User {user.pk} tried to lower difficulty from '{current_level}' for syllabus {syllabus_id}"
+        )
+        messages.info(request, "You are already at the lowest difficulty level.")
+        # Redirect back to the syllabus detail page they came from
+        return redirect(reverse("syllabus:detail", args=[syllabus_id]))
+
+    # If new_level is not None, proceed with the change (logging and service call happen next)
+
+    logger.info(
+        f"Changing difficulty for syllabus {syllabus_id} (User: {user.pk}) from "
+        f"'{current_level}' to '{new_level}' for topic '{topic}'"
+    )
+
+    try:
+        # Trigger the generation/retrieval of the new syllabus
+        # This service call might take time if generation is needed
+        # We don't need the result here, just trigger it.
+        # The user will be redirected to the generating page which polls.
+        # Note: syllabus_service.get_or_generate_syllabus is async, so await it.
+        # user is guaranteed authenticated here.
+        placeholder_syllabus_id = await syllabus_service.get_or_generate_syllabus(
+            topic=topic, level=new_level, user=user
+        )  # Await the async service call
+
+        # Redirect to the 'generating syllabus' page using the placeholder ID
+        # Assumes a URL pattern named 'generating_by_id' exists in onboarding.urls
+        # Redirect to the 'generating syllabus' page using the actual syllabus ID
+        # The URL name is 'generating_syllabus' (no namespace) and takes 'syllabus_id'
+        generating_url = reverse(
+            "onboarding:generating_syllabus",
+            kwargs={"syllabus_id": placeholder_syllabus_id},
+        )
+        logger.info(
+            f"Redirecting user {user.pk} to generating page for placeholder ID: {placeholder_syllabus_id}"
+        )
+        return redirect(generating_url)
+
+    except Exception as e:
+        logger.error(
+            f"Error during difficulty change process for user {user.pk}, syllabus {syllabus_id}: {e}",
+            exc_info=True,
+        )
+        messages.error(
+            request, "An unexpected error occurred while changing the difficulty."
+        )
+        return redirect(reverse("dashboard"))

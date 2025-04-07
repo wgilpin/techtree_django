@@ -71,6 +71,11 @@ env = [
     "DJANGO_ALLOW_ASYNC_UNSAFE=1",
 ]
 addopts = "--show-capture=no"
+filterwarnings = [
+    "ignore:asyncio test.*requested async.*fixture.*in strict mode:pytest.PytestDeprecationWarning",
+]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
 
 
 

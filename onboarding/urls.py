@@ -3,6 +3,9 @@
 from django.urls import path
 from . import views
 
+app_name = 'onboarding' # Required for namespacing
+
+
 # Define URL names for use in templates {% url '...' %}
 # We are not using a namespace here, consistent with the 'core' app
 urlpatterns = [
@@ -25,4 +28,8 @@ urlpatterns = [
     # URL to handle skipping the assessment
     # pylint: disable=no-member
     path('skip/', views.skip_assessment_view, name='skip_assessment'),
+    # URL to show the 'generating syllabus' loading page
+    path("generating/<uuid:syllabus_id>/", views.generating_syllabus_view, name="generating_syllabus"),
+    # URL for the frontend to poll syllabus generation status
+    path("poll-syllabus-status/<uuid:syllabus_id>/", views.poll_syllabus_status_view, name="poll_syllabus_status"),
 ]

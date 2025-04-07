@@ -7,6 +7,7 @@ import json
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from core.constants import DIFFICULTY_BEGINNER # Import constant
 
 from core.models import (
     Syllabus, Module, Lesson, LessonContent, UserProgress, ConversationHistory
@@ -25,7 +26,7 @@ class LessonServicesTestCase(TestCase):
         """Set up non-modified objects used by all test methods."""
         cls.user = User.objects.create_user(username='testuser', password='password')
         cls.syllabus = Syllabus.objects.create(
-            topic="Test Topic", level="beginner", user=cls.user
+            topic="Test Topic", level=DIFFICULTY_BEGINNER, user=cls.user
         )
         cls.module = Module.objects.create(
             syllabus=cls.syllabus, module_index=0, title="Test Module"

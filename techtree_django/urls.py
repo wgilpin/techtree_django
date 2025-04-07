@@ -25,7 +25,7 @@ urlpatterns = [
     # Include URLs from the core app
     path("", include("core.urls")),
     # Include URLs from the onboarding app
-    path("onboarding/", include("onboarding.urls")),
+    path("onboarding/", include("onboarding.urls", namespace="onboarding")),
     path("syllabus/", include("syllabus.urls")), # Include syllabus app URLs
     path("lessons/", include("lessons.urls")), # Include lessons app URLs
 ]

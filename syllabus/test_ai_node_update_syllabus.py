@@ -1,13 +1,11 @@
 """Tests for the update_syllabus node function."""
 
-import pytest
-from unittest.mock import patch, MagicMock
-from typing import cast
 import json
+from typing import cast
+from unittest.mock import MagicMock, patch
 
 from syllabus.ai.nodes import initialize_state, update_syllabus
 from syllabus.ai.state import SyllabusState
-
 
 # --- Test update_syllabus ---
 
@@ -61,7 +59,7 @@ def test_update_syllabus_success(mock_call_retry):
 
     # Check LLM call
     mock_call_retry.assert_called_once()
-    call_args, call_kwargs = mock_call_retry.call_args
+    call_args, _ = mock_call_retry.call_args
     assert call_args[0] == mock_llm.generate_content # Check method called
     assert isinstance(call_args[1], str)
     assert topic in call_args[1]

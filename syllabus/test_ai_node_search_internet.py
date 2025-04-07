@@ -1,20 +1,23 @@
 """Tests for the search_internet node function."""
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock  # Changed patch to AsyncMock
 from typing import cast
+from unittest.mock import AsyncMock, MagicMock  # Changed patch to AsyncMock
+
+import pytest
 from requests import RequestException
+from tavily import (
+    AsyncTavilyClient,
+)  # Import the actual client for type hinting if needed
 
-from tavily import AsyncTavilyClient # Import the actual client for type hinting if needed
-
+from core.constants import DIFFICULTY_KEY_TO_DISPLAY
 from syllabus.ai.nodes import initialize_state, search_internet
 from syllabus.ai.state import SyllabusState
 
-
 # --- Test search_internet ---
 
+
 @pytest.mark.asyncio
-async def test_search_internet_success(): # Removed mock_call_retry, added async
+async def test_search_internet_success():  # Removed mock_call_retry, added async
     """Test successful internet search."""
     topic = "Web Search Topic"
     level = "beginner"
@@ -33,7 +36,9 @@ async def test_search_internet_success(): # Removed mock_call_retry, added async
     mock_tavily.search.side_effect = [mock_response_1, mock_response_2, mock_response_3]
 
     # Call the node function
-    result_state_dict = await search_internet(initial_state, tavily_client=mock_tavily) # Added await
+    result_state_dict = await search_internet(
+        initial_state, tavily_client=mock_tavily
+    )  # Added await
     result_state = cast(SyllabusState, result_state_dict)
 
     # Assertions
@@ -41,14 +46,14 @@ async def test_search_internet_success(): # Removed mock_call_retry, added async
     expected_queries = [
         f"{topic} overview",
         f"{topic} syllabus curriculum outline learning objectives",
-        f"{topic} course syllabus curriculum for {level} students",
+        f"{topic} course syllabus curriculum for {DIFFICULTY_KEY_TO_DISPLAY[level]} students",  # Expect display value
     ]
     assert result_state["search_queries"] == expected_queries
     # Check combined results from the side_effect list
     expected_results = [
         "Overview result.",
         "Syllabus objectives result.",
-        f"Course for {level} result."
+        f"Course for {level} result.",
     ]
     assert result_state["search_results"] == expected_results
     assert result_state["error_message"] is None
@@ -58,7 +63,7 @@ async def test_search_internet_success(): # Removed mock_call_retry, added async
     # Check calls (order might vary with gather, but args should match)
     calls = mock_tavily.search.call_args_list
     # Extract keyword args from each call to check query and params
-    called_queries = {call.kwargs['query'] for call in calls}
+    called_queries = {call.kwargs["query"] for call in calls}
     expected_query_set = set(expected_queries)
     assert called_queries == expected_query_set
 
@@ -71,19 +76,23 @@ async def test_search_internet_success(): # Removed mock_call_retry, added async
 
 
 @pytest.mark.asyncio
-async def test_search_internet_failure(): # Removed mock_call_retry, added async
+async def test_search_internet_failure():  # Removed mock_call_retry, added async
     """Test internet search when the API call fails."""
     topic = "API Fail Topic"
-    level = "intermediate"
+    level = "good knowledge"  # Use correct key from constants
     initial_state_dict = initialize_state(None, topic=topic, knowledge_level=level)
     initial_state = cast(SyllabusState, initial_state_dict)
 
     # Mock the AsyncTavilyClient and simulate failure in its search method
     mock_tavily = MagicMock(spec=AsyncTavilyClient)
-    mock_tavily.search = AsyncMock(side_effect=RequestException("Simulated Tavily API Error"))
+    mock_tavily.search = AsyncMock(
+        side_effect=RequestException("Simulated Tavily API Error")
+    )
 
     # Call the node function
-    result_state_dict = await search_internet(initial_state, tavily_client=mock_tavily) # Added await
+    result_state_dict = await search_internet(
+        initial_state, tavily_client=mock_tavily
+    )  # Added await
     result_state = cast(SyllabusState, result_state_dict)
 
     # Assertions
@@ -91,7 +100,7 @@ async def test_search_internet_failure(): # Removed mock_call_retry, added async
     expected_queries = [
         f"{topic} overview",
         f"{topic} syllabus curriculum outline learning objectives",
-        f"{topic} course syllabus curriculum for {level} students",
+        f"{topic} course syllabus curriculum for {DIFFICULTY_KEY_TO_DISPLAY[level]} students",  # Expect display value
     ]
     assert result_state["search_queries"] == expected_queries
     # Since all calls fail with the side_effect, results should be empty
@@ -105,7 +114,7 @@ async def test_search_internet_failure(): # Removed mock_call_retry, added async
 
 
 @pytest.mark.asyncio
-async def test_search_internet_no_client(): # Added async
+async def test_search_internet_no_client():  # Added async
     """Test internet search when tavily_client is None."""
     topic = "No Client Topic"
     level = "beginner"
@@ -113,10 +122,12 @@ async def test_search_internet_no_client(): # Added async
     initial_state = cast(SyllabusState, initial_state_dict)
 
     # Call the node function with tavily_client=None
-    result_state_dict = await search_internet(initial_state, tavily_client=None) # Added await
+    result_state_dict = await search_internet(
+        initial_state, tavily_client=None
+    )  # Added await
     result_state = cast(SyllabusState, result_state_dict)
 
     # Assertions
-    assert result_state["search_queries"] == [] # No query attempted
+    assert result_state["search_queries"] == []  # No query attempted
     assert result_state["search_results"] == []
     assert "Tavily client not configured" in result_state["error_message"]

@@ -8,6 +8,7 @@ from django.test import TestCase, Client
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django.utils import timezone
+from core.constants import DIFFICULTY_BEGINNER # Import constant
 
 from core.models import (
     Syllabus,
@@ -35,7 +36,7 @@ class LessonViewsTestCase(TestCase):
             username="otheruser", password="password"
         )
         cls.syllabus = Syllabus.objects.create(
-            topic="Test Topic", level="beginner", user=cls.user
+            topic="Test Topic", level=DIFFICULTY_BEGINNER, user=cls.user
         )
         cls.module = Module.objects.create(
             syllabus=cls.syllabus, module_index=0, title="Test Module"

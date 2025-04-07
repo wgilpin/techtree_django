@@ -12,6 +12,7 @@ from django.contrib.auth import get_user_model
 from django.test import AsyncClient, Client  # Import standard Client too
 from django.urls import reverse
 
+from core.constants import DIFFICULTY_BEGINNER # Import the constant
 from core.models import UserAssessment  # Assuming UserAssessment is used
 
 # Mark all tests in this module as async
@@ -111,7 +112,7 @@ def test_assessment_page_view_get(
     client_fixture.login(username="testonboard", password="password")
     topic = "TestTopic"
     # Use correct URL name without namespace
-    url = reverse("onboarding_assessment_page", args=[topic])
+    url = reverse("onboarding:onboarding_assessment_page", args=[topic])
     # Use standard client.get for sync view
     response = client_fixture.get(url)
     assert response.status_code == 200
@@ -121,7 +122,7 @@ def test_assessment_page_view_get(
     assert "start_url" in response.context
     # submit_answer_url is not passed in assessment_page_view context
     # Use correct URL names without namespace
-    assert response.context["start_url"] == reverse("onboarding_start", args=[topic])
+    assert response.context["start_url"] == reverse("onboarding:onboarding_start", args=[topic])
 
 
 # --- Test start_assessment_view ---
@@ -137,7 +138,7 @@ async def test_start_assessment_view_success(
     await logged_in_user
     topic = "CloudComputing"
     # Use correct URL name without namespace
-    url = reverse("onboarding_start", args=[topic])
+    url = reverse("onboarding:onboarding_start", args=[topic])
 
     # Mock the AI instance and its methods
     mock_ai_instance = MagicMock()
@@ -197,7 +198,7 @@ async def test_start_assessment_view_ai_error(
     await logged_in_user
     topic = "AIErrorTopic"
     # Use correct URL name without namespace
-    url = reverse("onboarding_start", args=[topic])
+    url = reverse("onboarding:onboarding_start", args=[topic])
 
     mock_ai_instance = MagicMock()
     mock_initial_state = {"topic": topic, "questions_asked": [], "step": 0}
@@ -232,7 +233,7 @@ async def test_submit_answer_view_continue(
     # Await the fixture if it's async
     await logged_in_user
     # Use correct URL name without namespace
-    url = reverse("onboarding_submit")
+    url = reverse("onboarding:onboarding_submit")
     user_answer = "Answer A"
 
     # Mock AI instance and methods
@@ -335,7 +336,7 @@ async def test_submit_answer_view_complete(
     # Await the fixture if it's async
     user = await logged_in_user
     # Use correct URL name without namespace
-    url = reverse("onboarding_submit")
+    url = reverse("onboarding:onboarding_submit")
     user_answer = "Final Answer"
 
     # Mock AI instance and methods
@@ -378,7 +379,7 @@ async def test_submit_answer_view_complete(
     }
     final_assessment_result = {
         "overall_score": 80.0,
-        "knowledge_level": "advanced",
+        "knowledge_level": "advanced", # Correct key
     }  # Score as percentage
     # Mock calculate_final_assessment to return the state *with* the final_assessment key and feedback
     final_state_with_assessment_key = {
@@ -396,8 +397,8 @@ async def test_submit_answer_view_complete(
     mock_get_ai.return_value = mock_ai_instance
 
     # Mock the syllabus service call to return a valid UUID syllabus ID
-    mock_syllabus_id = str(uuid.uuid4())  # Generate a real UUID
-    mock_get_or_generate_syllabus.return_value = {"syllabus_id": mock_syllabus_id}
+    mock_syllabus_id = uuid.uuid4()  # Generate a real UUID object
+    mock_get_or_generate_syllabus.return_value = mock_syllabus_id # Return the UUID directly
 
     # Set initial state in session asynchronously using helper
     await set_session_value_sync(
@@ -413,13 +414,15 @@ async def test_submit_answer_view_complete(
     response_json = response.json()
     assert response_json["is_complete"] is True
     assert (
-        response_json["knowledge_level"] == "advanced"
+        response_json["knowledge_level"] == "advanced" # Correct key
     )  # From final_assessment_result mock
     assert response_json["score"] == 80.0  # From final_assessment_result mock
-    assert "syllabus_url" in response_json
-    expected_syllabus_url = reverse("syllabus:detail", args=[mock_syllabus_id])
-    assert response_json["syllabus_url"] == expected_syllabus_url
-    assert response_json["feedback"] == "Assessment complete. Syllabus generated."
+    # Check for generating_url instead of syllabus_url
+    assert "generating_url" in response_json
+    # Check the structure of the generating URL
+    expected_generating_url = reverse("onboarding:generating_syllabus", kwargs={'syllabus_id': mock_syllabus_id})
+    assert response_json["generating_url"] == expected_generating_url
+    assert response_json["feedback"] == "Assessment complete. Preparing your syllabus..." # Updated feedback
 
     # Check session state cleared asynchronously using helper
     session_exists = await session_key_exists_sync(
@@ -435,7 +438,7 @@ async def test_submit_answer_view_complete(
     mock_create_assessment.assert_called_once()
     # Check syllabus generation was called (mocked)
     mock_get_or_generate_syllabus.assert_called_once_with(
-        topic="CompleteTopic", level="advanced", user=user
+        topic="CompleteTopic", level="advanced", user=user # Correct key
     )
     # Check history args if needed
 
@@ -446,7 +449,7 @@ async def test_submit_answer_view_no_state(async_client_fixture, logged_in_user)
     # Await the fixture if it's async
     await logged_in_user
     # Use correct URL name without namespace
-    url = reverse("onboarding_submit")
+    url = reverse("onboarding:onboarding_submit")
     response = await async_client_fixture.post(
         url, json.dumps({"answer": "test"}), content_type="application/json"
     )
@@ -463,7 +466,7 @@ async def test_submit_answer_view_missing_answer(async_client_fixture, logged_in
     # Await the fixture if it's async
     await logged_in_user
     # Use correct URL name without namespace
-    url = reverse("onboarding_submit")
+    url = reverse("onboarding:onboarding_submit")
     # Set some state in session asynchronously using helper
     await set_session_value_sync(
         async_client_fixture,
@@ -492,7 +495,7 @@ async def test_submit_answer_view_evaluate_error(
     # Await the fixture if it's async
     await logged_in_user
     # Use correct URL name without namespace
-    url = reverse("onboarding_submit")
+    url = reverse("onboarding:onboarding_submit")
     user_answer = "Answer causing error"
 
     mock_ai_instance = MagicMock()
@@ -537,10 +540,10 @@ async def test_submit_answer_view_complete_returns_json_with_url(
 ):
     """Test submitting final answer returns JSON with syllabus URL on completion."""
     user = await logged_in_user
-    url = reverse("onboarding_submit")
+    url = reverse("onboarding:onboarding_submit")
     user_answer = "Final Answer JSON Test"
     topic = "JsonCompleteTopic"
-    knowledge_level = "intermediate"
+    knowledge_level = "good knowledge" # Correct key
     score = 75.0
 
     # Mock AI instance and methods
@@ -591,8 +594,8 @@ async def test_submit_answer_view_complete_returns_json_with_url(
     mock_get_ai.return_value = mock_ai_instance
 
     # Mock the syllabus service call to return a valid UUID syllabus ID
-    mock_syllabus_id = str(uuid.uuid4())
-    mock_get_or_generate_syllabus.return_value = {"syllabus_id": mock_syllabus_id}
+    mock_syllabus_id = uuid.uuid4() # Generate a real UUID object
+    mock_get_or_generate_syllabus.return_value = mock_syllabus_id # Return the UUID directly
 
     # Set initial state in session
     await set_session_value_sync(
@@ -612,12 +615,13 @@ async def test_submit_answer_view_complete_returns_json_with_url(
     assert response_json["is_complete"] is True
     assert response_json["knowledge_level"] == knowledge_level
     assert response_json["score"] == score
-    assert "syllabus_url" in response_json
-    expected_syllabus_url = reverse("syllabus:detail", args=[mock_syllabus_id])
-    assert response_json["syllabus_url"] == expected_syllabus_url
+    # Check for generating_url instead of syllabus_url
+    assert "generating_url" in response_json
+    expected_generating_url = reverse("onboarding:generating_syllabus", kwargs={'syllabus_id': mock_syllabus_id})
+    assert response_json["generating_url"] == expected_generating_url
     assert (
-        response_json["feedback"] == "Assessment complete. Syllabus generated."
-    )  # Check feedback
+        response_json["feedback"] == "Assessment complete. Preparing your syllabus..."
+    )  # Check updated feedback
 
     # Assert: Session state should be cleared
     session_exists = await session_key_exists_sync(
@@ -666,7 +670,7 @@ def logged_in_standard_client(client_fixture):
 @pytest.mark.django_db
 def test_skip_assessment_unauthenticated(client_fixture):
     """Test unauthenticated user POSTing to skip_assessment is redirected to login."""
-    url = reverse("skip_assessment")  # Use correct non-namespaced name
+    url = reverse("onboarding:skip_assessment")
     response = client_fixture.post(url)
     # Check for redirect to login URL (status code 302)
     assert response.status_code == 302
@@ -679,7 +683,7 @@ def test_skip_assessment_get_method_not_allowed(
     logged_in_standard_client,
 ):  # Use the new fixture
     """Test GET request to skip_assessment returns 405 Method Not Allowed."""
-    url = reverse("skip_assessment")  # Use correct non-namespaced name
+    url = reverse("onboarding:skip_assessment")
     response = logged_in_standard_client.get(url)  # Use the logged-in client
     # The view uses @require_POST, so GET should return 405
     assert response.status_code == 405
@@ -690,7 +694,7 @@ def test_skip_assessment_success(logged_in_standard_client):  # Use the new fixt
     """Test successful skip assessment via POST request for logged-in user."""
     # Fetch the user within the test since the fixture now returns the client
     user = User.objects.get(username="testskipuser")
-    url = reverse("skip_assessment")  # Use correct non-namespaced name
+    url = reverse("onboarding:skip_assessment")
 
     # Ensure no assessment exists beforehand for this user
     assert not UserAssessment.objects.filter(user=user).exists()
@@ -710,5 +714,5 @@ def test_skip_assessment_success(logged_in_standard_client):  # Use the new fixt
             assessment.topic == "Assessment Skipped"
         ), f"Expected topic 'Assessment Skipped', got '{assessment.topic}'"
         assert (
-            assessment.knowledge_level == "beginner"
-        ), f"Expected knowledge_level 'beginner', got '{assessment.knowledge_level}'"
+            assessment.knowledge_level == DIFFICULTY_BEGINNER
+        ), f"Expected knowledge_level '{DIFFICULTY_BEGINNER}', got '{assessment.knowledge_level}'"
