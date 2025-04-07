@@ -45,9 +45,10 @@
                     {{ exposition_content|markdownify }} {# Render existing content #}
                 {% else %}
                     <div id="loading-message">
-                        {# Spinner will be centered by existing #loading-message styles #}
-                        <div class="spinner-border text-primary" role="status">
-                            <span class="visually-hidden">Loading...</span>
+                        {# Static text and spinner centered by existing #loading-message styles #}
+                        <h1 class="display-4 mb-3">Loading...</h1> {# Larger heading, added margin-bottom #}
+                        <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;"> {# Made spinner larger #}
+                            {# Removed visually-hidden span as text is now in h1 #}
                         </div>
                     </div>
                 {% endif %}
