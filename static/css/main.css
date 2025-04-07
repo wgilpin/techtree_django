@@ -694,7 +694,7 @@ label {
 }
 
 .chat-history {
-    flex: 1;
+    /* flex: 1; Removed to allow natural height based on content */
     padding: 15px;
     overflow-y: auto;
     display: flex;
@@ -1104,6 +1104,8 @@ button .spinner,
 #chat-history {
     background-color: #f0f0f0; /* Light gray background for the chat area */
     padding: 15px;
+    max-height: 800px; /* Limit height and allow scrolling */
+    overflow-y: auto;  /* Add vertical scrollbar when content exceeds max-height */
 }
 
 .message-container {

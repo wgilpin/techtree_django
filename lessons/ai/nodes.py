@@ -274,7 +274,6 @@ def classify_intent(state: LessonState) -> LessonState:
             "active_task_context": active_task_context,
         }
         formatted_prompt = INTENT_CLASSIFICATION_PROMPT.format(**prompt_input)
-        logger.debug("Formatted intent prompt:\n%s", formatted_prompt)
         response = call_with_retry(llm.invoke, formatted_prompt)
 
         try:
@@ -391,7 +390,6 @@ def generate_chat_response(state: LessonState) -> LessonState:
             "latex_formatting_instructions": LATEX_FORMATTING_INSTRUCTIONS,
         }
         prompt = CHAT_RESPONSE_PROMPT.format(**prompt_input)
-        logger.debug("Formatted chat response prompt:\n%s", prompt)
         response = call_with_retry(llm.invoke, prompt)
         ai_response_content = response.content.strip()
     except Exception as e:
@@ -469,7 +467,6 @@ def generate_new_exercise(state: LessonState) -> LessonState:
             "latex_formatting_instructions": LATEX_FORMATTING_INSTRUCTIONS,
         }
         formatted_prompt = GENERATE_EXERCISE_PROMPT.format(**prompt_input)
-        logger.debug("Formatted exercise prompt:\n%s", formatted_prompt)
         response = call_with_retry(llm.invoke, formatted_prompt)
 
         try:
@@ -687,7 +684,6 @@ def evaluate_answer(state: LessonState) -> LessonState:
             "latex_formatting_instructions": LATEX_FORMATTING_INSTRUCTIONS,
         }
         formatted_prompt = EVALUATE_ANSWER_PROMPT.format(**prompt_input)
-        logger.debug("Formatted evaluation prompt:\n%s", formatted_prompt)
         response = call_with_retry(llm.invoke, formatted_prompt)
 
         try:
@@ -814,7 +810,6 @@ def generate_new_assessment(state: LessonState) -> LessonState:
             "latex_formatting_instructions": LATEX_FORMATTING_INSTRUCTIONS,
         }
         formatted_prompt = GENERATE_ASSESSMENT_PROMPT.format(**prompt_input)
-        logger.debug("Formatted assessment prompt:\n%s", formatted_prompt)
         response = call_with_retry(llm.invoke, formatted_prompt)
 
         try:
