@@ -9,7 +9,7 @@ from asgiref.sync import sync_to_async
 from django.contrib import messages  # Add messages framework
 from django.contrib.auth.decorators import login_required  # Add login_required
 from django.contrib.auth.models import User  # Import User directly
-from django.http import JsonResponse  # Add Http404
+from django.http import JsonResponse, Http404 # Import Http404
 from django.http import HttpRequest, HttpResponse, HttpResponseBadRequest
 from django.shortcuts import (  # Add redirect, get_object_or_404
     get_object_or_404,
@@ -511,10 +511,11 @@ def generating_syllabus_view(
 ) -> HttpResponse:
     """Renders the page indicating syllabus generation is in progress."""
     logger.info(f"Displaying generating syllabus page for syllabus_id='{syllabus_id}'")
-    syllabus = get_object_or_404(Syllabus, id=syllabus_id)
+    # This view is synchronous, so direct DB access is okay here.
+    # Use select_related to potentially optimize if user is accessed in template.
+    syllabus = get_object_or_404(Syllabus.objects.select_related('user'), syllabus_id=syllabus_id)
 
     # Ensure the user requesting the page is the owner of the syllabus
-    # Cast user after login_required decorator guarantees authentication
     # @login_required ensures request.user is authenticated User
     if syllabus.user != request.user:
         # Ensure syllabus.user is not None before accessing pk
@@ -530,7 +531,7 @@ def generating_syllabus_view(
 
     try:
         # Generate the polling URL using the syllabus_id
-        poll_url = reverse("poll_syllabus_status", kwargs={"syllabus_id": syllabus_id})
+        poll_url = reverse("onboarding:poll_syllabus_status", kwargs={"syllabus_id": syllabus_id})
     except NoReverseMatch:
         logger.error(
             f"Could not reverse URL for poll_syllabus_status with syllabus_id={syllabus_id}"
@@ -571,68 +572,65 @@ async def poll_syllabus_status_view(
         f"Polling syllabus status for user {user.pk}, syllabus_id='{syllabus_id}'"
     )
 
-    try:
-        # Fetch the syllabus asynchronously using sync_to_async with get_object_or_404
-        # Note: get_object_or_404 itself is sync, so wrap it.
-        aget_object_or_404 = sync_to_async(get_object_or_404)
-        # This will raise Http404 if not found, caught by Django's middleware
-        syllabus = await aget_object_or_404(Syllabus, id=syllabus_id)
+    # Fetch the syllabus asynchronously using sync_to_async with get_object_or_404
+    # Note: get_object_or_404 itself is sync, so wrap it.
+    # Use select_related to prefetch the user and avoid sync DB access later
+    # This will raise Http404 if not found, which will be handled by Django middleware
+    aget_object_or_404 = sync_to_async(
+        lambda **kwargs: get_object_or_404(Syllabus.objects.select_related('user'), **kwargs)
+    )
+    syllabus = await aget_object_or_404(syllabus_id=syllabus_id)
 
-        # Check ownership
-        if syllabus.user != user:
-            # Ensure syllabus.user is not None before accessing pk
-            owner_pk = cast(User, syllabus.user).pk if syllabus.user else "Unknown"  # type: ignore[attr-defined]
-            logger.warning(
-                f"User {user.pk} attempted to poll status for syllabus {syllabus_id} owned by {owner_pk}"
-            )
-            return JsonResponse(
-                {"status": "error", "message": "Permission denied."}, status=403
-            )
-
-        logger.info(
-            f"Syllabus {syllabus_id} status for user {user.pk}: {syllabus.status}"
-        )
-
-        response_data = {"status": syllabus.status}
-
-        # If completed, include the URL to the syllabus detail page
-        # Use the nested StatusChoices class
-        # Compare status directly with string values
-        if (
-            syllabus.status == Syllabus.StatusChoices.COMPLETED.value
-        ):  # Or simply 'COMPLETED'
-            try:
-                # Assuming 'syllabus:detail' is the correct URL name in the syllabus app
-                syllabus_url = reverse("syllabus:detail", args=[syllabus.pk])
-                response_data["syllabus_url"] = syllabus_url
-                logger.info(
-                    f"Syllabus {syllabus_id} completed. Providing URL: {syllabus_url}"
-                )
-            except NoReverseMatch:
-                logger.error(
-                    f"Could not reverse syllabus detail URL for ID {syllabus.pk}"
-                )
-                # Still return completed status, but log the URL error
-                response_data["message"] = "Syllabus ready but URL generation failed."
-        # Use the nested StatusChoices class
-        # Compare status directly with string values
-        elif (
-            syllabus.status == Syllabus.StatusChoices.FAILED.value
-        ):  # Or simply 'FAILED'
-            logger.warning(f"Syllabus {syllabus_id} generation failed.")
-            # Optionally add more failure details if available on the model
-            response_data["message"] = "Syllabus generation failed."
-
-        return JsonResponse(response_data)
-
-    # Http404 is raised by get_object_or_404 if not found, handled by Django.
-    # Catch other potential errors during status check or URL reversal.
-    except Exception as e:
-        logger.error(
-            f"Error checking syllabus status for user {user.pk}, syllabus_id={syllabus_id}: {e}",
-            exc_info=True,
+    # Check ownership (Now safe in async context)
+    if syllabus.user != user:
+        # Ensure syllabus.user is not None before accessing pk
+        owner_pk = cast(User, syllabus.user).pk if syllabus.user else "Unknown"  # type: ignore[attr-defined]
+        logger.warning(
+            f"User {user.pk} attempted to poll status for syllabus {syllabus_id} owned by {owner_pk}"
         )
         return JsonResponse(
-            {"status": "error", "message": f"Error checking status: {str(e)}"},
-            status=500,
+            {"status": "error", "message": "Permission denied."}, status=403
         )
+
+    logger.info(
+        f"Syllabus {syllabus_id} status for user {user.pk}: {syllabus.status}"
+    )
+
+    response_data = {"status": syllabus.status}
+
+    # If completed, include the URL to the syllabus detail page
+    # Use the nested StatusChoices class
+    # Compare status directly with string values
+    if (
+        syllabus.status == Syllabus.StatusChoices.COMPLETED.value
+    ):  # Or simply 'COMPLETED'
+        try:
+            # Assuming 'syllabus:detail' is the correct URL name in the syllabus app
+            # Accessing pk might require sync_to_async if syllabus wasn't fully loaded,
+            # but select_related should handle the user, and pk is local.
+            # Let's wrap reverse just in case, although it might not be strictly necessary.
+            async_reverse = sync_to_async(reverse)
+            syllabus_url = await async_reverse("syllabus:detail", args=[syllabus.pk])
+            response_data["syllabus_url"] = syllabus_url
+            logger.info(
+                f"Syllabus {syllabus_id} completed. Providing URL: {syllabus_url}"
+            )
+        except NoReverseMatch:
+            logger.error(
+                f"Could not reverse syllabus detail URL for ID {syllabus.pk}"
+            )
+            # Still return completed status, but log the URL error
+            response_data["message"] = "Syllabus ready but URL generation failed."
+    # Use the nested StatusChoices class
+    # Compare status directly with string values
+    elif (
+        syllabus.status == Syllabus.StatusChoices.FAILED.value
+    ):  # Or simply 'FAILED'
+        logger.warning(f"Syllabus {syllabus_id} generation failed.")
+        # Optionally add more failure details if available on the model
+        response_data["message"] = "Syllabus generation failed."
+
+    return JsonResponse(response_data)
+
+    # Removed broad try...except block. Http404 from aget_object_or_404
+    # and other unexpected errors will be handled by Django middleware.
