@@ -2,13 +2,14 @@
 
 # pylint: disable=no-member
 
-import json  # Move json import up
+import json
 import logging
 import re
 import uuid
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, cast
 
 from asgiref.sync import sync_to_async
+from django.contrib.auth.models import User
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -29,11 +30,12 @@ from core.models import (
 )
 from syllabus.services import SyllabusService  # Import syllabus service
 
-from . import services  # Import the services module
+from . import services, state_service, content_service, interaction_service # Import the services modules
 from .templatetags.markdown_extras import markdownify  # Import markdownify
 
 if TYPE_CHECKING:
-    from django.contrib.auth.models import User  # type: ignore[attr-defined]
+    # Restore User type hint for sync view
+    from django.contrib.auth.models import User as AuthUserType #pylint: disable=reimported
 
 logger = logging.getLogger(__name__)  # Ensure logger is initialized
 
@@ -96,7 +98,7 @@ def lesson_detail(
     POST interactions are handled by the 'handle_lesson_interaction' view.
     """
 
-    user: "User" = request.user  # type: ignore[assignment]
+    user: "AuthUserType" = request.user  # type: ignore[assignment] # Use type alias
 
     if request.method == "POST":
         # Redirect POST requests intended for the detail page (e.g., non-JS form fallback)
@@ -156,7 +158,96 @@ def lesson_detail(
             )
 
         # Try fetching existing content only
-        lesson_content = LessonContent.objects.filter(lesson=lesson).first()
+        lesson_content: Optional[LessonContent] = LessonContent.objects.filter(
+            lesson=lesson
+        ).first()  # Type hint
+
+        # --- Determine Content Status ---
+        content_status: str = "NOT_FOUND"  # Default if no record
+        if lesson_content:
+            content_status = lesson_content.status  # Get status from the model field
+            # Handle legacy cases where status might not be set yet
+            if not content_status:
+                # If content exists but status is empty, assume it's completed (legacy)
+                if (
+                    lesson_content.content
+                    and isinstance(lesson_content.content, dict)
+                    and "exposition" in lesson_content.content
+                ):
+                    content_status = LessonContent.StatusChoices.COMPLETED
+                    logger.info(
+                        "Lesson content %s has no status, assuming COMPLETED (legacy).",
+                        lesson_content.pk,
+                    )
+                    # Optionally save the status back if you want to fix legacy data here
+                    # lesson_content.status = LessonContentStatus.COMPLETED
+                    # lesson_content.save(update_fields=['status'])
+                else:
+                    # If content exists but is invalid/empty and no status, mark as PENDING.
+                    content_status = LessonContent.StatusChoices.PENDING
+                    logger.warning(
+                        "Lesson content %s has no status and invalid content, setting to PENDING.",
+                        lesson_content.pk,
+                    )
+                    # Optionally save status back
+                    # lesson_content.status = LessonContentStatus.PENDING
+                    # lesson_content.save(update_fields=['status'])
+        else:
+            # If no LessonContent record exists, it's PENDING generation
+            content_status = LessonContent.StatusChoices.PENDING
+            logger.info(
+                "No LessonContent found for lesson %s, status is PENDING.", lesson.pk
+            )
+
+        # --- Extract Exposition Content (if available and valid) ---
+        exposition_content_value: Optional[str] = None
+        # Prioritize showing content if it exists and looks valid, unless explicitly failed/generating
+        if lesson_content and content_status not in [
+            LessonContent.StatusChoices.FAILED,
+            LessonContent.StatusChoices.GENERATING,
+        ]:
+            if isinstance(lesson_content.content, dict):
+                exposition_value = lesson_content.content.get("exposition")
+                if exposition_value:
+                    exposition_content_value = clean_exposition_string(exposition_value)
+                    # If we found valid exposition, ensure status reflects completion if it was PENDING/None
+                    if (
+                        content_status == LessonContent.StatusChoices.PENDING
+                        or not content_status
+                    ):
+                        logger.info(
+                            "Found valid exposition for lesson content %s with status %s, "
+                            "treating as COMPLETED for display.",
+                            lesson_content.pk,
+                            content_status,
+                        )
+                        content_status = (
+                            LessonContent.StatusChoices.COMPLETED
+                        )  # Update status for context
+                elif content_status == LessonContent.StatusChoices.COMPLETED:
+                    # If status was COMPLETED but exposition is missing, mark as FAILED
+                    logger.warning(
+                        "Lesson content (pk=%s) status is COMPLETED but 'exposition' is missing or empty. "
+                        "Marking as FAILED.",
+                        lesson_content.pk,
+                    )
+                    content_status = LessonContent.StatusChoices.FAILED
+                    # Optionally save status back
+                    # lesson_content.status = LessonContent.StatusChoices.FAILED
+                    # lesson_content.save(update_fields=['status'])
+            elif content_status == LessonContent.StatusChoices.COMPLETED:
+                # If status was COMPLETED but content isn't a dict, mark as FAILED
+                logger.warning(
+                    "Lesson content (pk=%s) status is COMPLETED but content is not a dict (Type: %s)."
+                    "Marking as FAILED.",
+                    lesson_content.pk,
+                    type(lesson_content.content),
+                )
+                content_status = LessonContent.StatusChoices.FAILED
+                # Optionally save status back
+                # lesson_content.status = LessonContent.StatusChoices.FAILED
+                # lesson_content.save(update_fields=['status'])
+        # --- Conversation History ---
         conversation_history = list(
             ConversationHistory.objects.filter(progress=progress).order_by("timestamp")
         )
@@ -169,11 +260,9 @@ def lesson_detail(
                 "lesson, ask me to start a quiz"
             )
             # Create an unsaved ConversationHistory instance for the welcome message.
-            # This satisfies type checking and provides the necessary attributes for the template.
             welcome_message_instance = ConversationHistory(
                 role="assistant",
                 content=welcome_message_content,
-                # No need to set progress or timestamp as it's not saved and template doesn't use them here.
             )
             conversation_history.insert(0, welcome_message_instance)
             logger.info(
@@ -182,69 +271,30 @@ def lesson_detail(
             )
         # --- End Welcome Message ---
 
-        # Extract exposition string only if content already exists and is valid
-        exposition_content_value: Optional[str] = None  # Start as None
-        if lesson_content:  # Check if a record exists
-            if isinstance(lesson_content.content, dict):
-                # Check if it's an error structure we added in services.py
-                if "error" in lesson_content.content:
-                    logger.warning(
-                        "Lesson content (pk=%s) contains an error marker: %s",
-                        lesson_content.pk,
-                        lesson_content.content.get("error"),
-                    )
-                    # Keep exposition_content_value as None to trigger async loading/error display
-                else:
-                    # Original logic: get exposition if it exists
-                    exposition_value = lesson_content.content.get(
-                        "exposition"
-                    )  # Get value or None
-                    if (
-                        exposition_value  # Restore the condition check
-                    ):  # Check if exposition_value is not None and not empty string
-                        # Clean the extracted exposition string
-                        exposition_content_value = clean_exposition_string(
-                            exposition_value
-                        )
-                    else:
-                        # Handle case where exposition key exists but value is None or empty string
-                        logger.warning(
-                            "Lesson content (pk=%s) has missing or empty 'exposition' value.",
-                            lesson_content.pk,
-                        )
-                        # exposition_content_value remains None to trigger async loading
-            else:
-                # Log if existing content is not the expected dictionary format
-                logger.warning(
-                    "Existing lesson content (pk=%s) is not a dict. Type: %s, Value: %s",
-                    lesson_content.pk,
-                    type(lesson_content.content),
-                    str(lesson_content.content)[:200] + "...",
-                )
-                # exposition_content_value remains None
-        else:
-            # Log that content needs to be generated asynchronously
-            logger.info(
-                "Lesson content for lesson %s does not exist yet. Will be generated asynchronously.",
-                lesson.pk,
-            )
-            # exposition_content_value remains None
-
         context = {
             "syllabus": syllabus,
             "module": module,
             "lesson": lesson,
             "progress": progress,
             "title": f"Lesson: {lesson.title}",
-            # 'lesson_content': lesson_content, # No longer needed directly in template context
-            "exposition_content": exposition_content_value,  # Pass the extracted string value or None
-            "absolute_lesson_number": absolute_lesson_number,  # Add absolute index calculated above
+            # 'lesson_content': lesson_content, # No longer needed directly
+            "exposition_content": exposition_content_value,  # Now only set if COMPLETED
+            "content_status": content_status,  # Pass the determined status
+            "absolute_lesson_number": absolute_lesson_number,
             "conversation_history": conversation_history,
             "lesson_state_json": (
                 json.dumps(progress.lesson_state_json)
                 if progress and progress.lesson_state_json
                 else "{}"
             ),
+            # Add status constants for easy use in template if needed (optional but helpful)
+            "LessonContentStatus": {
+                "COMPLETED": LessonContent.StatusChoices.COMPLETED,
+                "GENERATING": LessonContent.StatusChoices.GENERATING,
+                "FAILED": LessonContent.StatusChoices.FAILED,
+                "PENDING": LessonContent.StatusChoices.PENDING,
+                # NOT_FOUND is effectively handled by PENDING now
+            },
         }
         return render(request, "lessons/lesson_detail.html", context)
 
@@ -270,31 +320,42 @@ def lesson_detail(
         return HttpResponse("An unexpected error occurred.", status=500)
 
 
-@login_required
 @require_POST  # This view only handles POST requests
-def handle_lesson_interaction(
+async def handle_lesson_interaction(  # Make async
     request: HttpRequest, syllabus_id: str, module_index: int, lesson_index: int
 ) -> JsonResponse:
     """
     Handles AJAX POST requests for lesson interactions (chat, answers, assessments).
     """
-    user: "User" = request.user  # type: ignore[assignment]
-    user_message_content = ""
-    submission_type = "chat"  # Default
-    error_message = None
-    status_code = 200
-    response_data = {}
+    # Explicitly type hint before check
+    user = await request.auser()  # type: ignore[assignment]
+    if not user.is_authenticated:
+        # Handle unauthenticated user for AJAX request
+        return JsonResponse(
+            {"status": "error", "message": "Authentication required."}, status=401
+        )
+    # After this check, user cannot be AnonymousUser
+    user = cast(User, user)  # Explicit cast using imported User
+    user_message_content: str = ""
+    submission_type: str = "chat"  # Default
+    progress: Optional[UserProgress] = None
 
     try:
-        # Fetch lesson context (needed for service calls)
-        syllabus = get_object_or_404(Syllabus, pk=syllabus_id)  # Add user check later
-        module = get_object_or_404(Module, syllabus=syllabus, module_index=module_index)
-        lesson = get_object_or_404(Lesson, module=module, lesson_index=lesson_index)
+        # 1. Fetch lesson context first
+        # Use sync_to_async for get_object_or_404 in async view
+        get_syllabus = sync_to_async(get_object_or_404)
+        get_module = sync_to_async(get_object_or_404)
+        get_lesson = sync_to_async(get_object_or_404)
 
-        # Get current progress and state
-        progress, _, _ = services.get_lesson_state_and_history(
-            user=user, syllabus=syllabus, module=module, lesson=lesson
+        syllabus = await get_syllabus(Syllabus, pk=syllabus_id)
+        module = await get_module(Module, syllabus=syllabus, module_index=module_index)
+        lesson = await get_lesson(Lesson, module=module, lesson_index=lesson_index)
+
+        # 2. Get current progress and state
+        state_result = await state_service.get_lesson_state_and_history(
+            user=user, syllabus=syllabus, module=module, lesson=lesson  # type: ignore[arg-type]
         )
+        progress = state_result[0]  # Unpack and type hint
 
         if progress is None:
             logger.error(
@@ -304,84 +365,98 @@ def handle_lesson_interaction(
             )
             return JsonResponse(
                 {"status": "error", "message": "Could not load user progress."},
-                status=500,
+                status=404,
             )
 
-        # Parse JSON request body
+        # 3. Parse JSON request body
         try:
             data = json.loads(request.body)
             user_message_content = data.get("message", "").strip()
-            submission_type = data.get("submission_type", "chat")  # Default to 'chat'
+            submission_type = data.get("submission_type", "chat")
         except json.JSONDecodeError:
             logger.warning(
                 "Received invalid JSON in AJAX request from user %s for lesson %s.",
                 user.username,
                 lesson.pk,
             )
-            error_message = "Invalid JSON format."
-            status_code = 400
+            return JsonResponse(
+                {"status": "error", "message": "Invalid JSON format."}, status=400
+            )
 
-        if not error_message and not user_message_content:
+        # 4. Validate input
+        if not user_message_content:
             logger.warning(
                 "Received empty message from user %s for lesson %s.",
                 user.username,
                 lesson.pk,
             )
-            error_message = "Message cannot be empty."
-            status_code = 400
-
-        # If no parsing errors and message is not empty, call the service
-        if not error_message:
-            logger.info(
-                "Handling interaction (Type: %s) from user %s for lesson %s.",
-                submission_type,
-                user.username,
-                lesson.pk,
+            return JsonResponse(
+                {"status": "error", "message": "Message cannot be empty."}, status=400
             )
-            service_response = services.handle_chat_message(
-                user=user,
+
+        # 5. Call the interaction service
+        logger.info(
+            "Handling interaction (Type: %s) from user %s for lesson %s.",
+            submission_type,
+            user.username,
+            lesson.pk,
+        )
+        try:
+            service_response = interaction_service.handle_chat_message(
+                user=user,  # type: ignore[arg-type]
                 progress=progress,
                 user_message_content=user_message_content,
                 submission_type=submission_type,
             )
 
-            if service_response and isinstance(service_response, dict):
-                logger.info(
-                    "Interaction handled successfully for user %s, lesson %s.",
-                    user.username,
-                    lesson.pk,
-                )
-                # Refresh progress to get the absolute latest state after service call
-                progress.refresh_from_db()
-                response_data = {
-                    "status": "success",
-                    # Apply markdownify to the assistant message before sending
-                    "assistant_message": (
-                        markdownify(service_response.get("assistant_message", ""))
-                        if service_response.get("assistant_message")
-                        else ""
-                    ),
-                    # Send back the updated state from the refreshed progress object
-                    "updated_state": progress.lesson_state_json,
-                }
-                status_code = 200
-            else:
+            if not service_response or not isinstance(service_response, dict):
                 logger.error(
                     "Service handle_chat_message did not return expected data for user %s, lesson %s. Response: %s",
                     user.username,
                     lesson.pk,
                     service_response,
                 )
-                error_message = "Failed to process interaction."
-                status_code = 500
+                return JsonResponse(
+                    {"status": "error", "message": "Failed to process interaction."},
+                    status=500,
+                )
 
-    # Specific exceptions first
-    except (
-        Syllabus.DoesNotExist,
-        Module.DoesNotExist,
-        Lesson.DoesNotExist,
-        Http404,
-    ) as exc:  # Catch Http404 here
+            logger.info(
+                "Interaction handled successfully for user %s, lesson %s.",
+                user.username,
+                lesson.pk,
+            )
+            # Refresh progress to get the absolute latest state after service call
+            # Use sync_to_async for refresh_from_db
+            await sync_to_async(progress.refresh_from_db)()
+
+            response_data = {
+                "status": "success",
+                # Apply markdownify to the assistant message before sending
+                "assistant_message": (
+                    markdownify(service_response.get("assistant_message", ""))
+                    if service_response.get("assistant_message")
+                    else ""
+                ),
+                # Send back the updated state from the refreshed progress object
+                "updated_state": progress.lesson_state_json,
+            }
+            return JsonResponse(response_data, status=200)
+
+        except Exception as service_exc:
+            logger.exception(
+                "Service handle_chat_message raised an error for user %s, lesson %s.",
+                user.username,
+                lesson.pk,
+                exc_info=service_exc,
+            )
+            return JsonResponse(
+                {"status": "error", "message": "Failed to process interaction."},
+                status=500,
+            )
+
+    # Handle context fetching errors (DoesNotExist -> Http404 -> 404)
+    except Http404 as exc:
         logger.warning(
             "Lesson context not found during interaction for syllabus %s, module %s, lesson %s: %s",
             syllabus_id,
@@ -389,39 +464,26 @@ def handle_lesson_interaction(
             lesson_index,
             str(exc),
         )
-        error_message = "Lesson context not found."
-        status_code = 404
-    except json.JSONDecodeError:  # Handle JSON errors specifically
-        logger.warning(
-            "Received invalid JSON in AJAX request from user %s for lesson %s.",
-            user.username,
-            f"{syllabus_id}:{module_index}:{lesson_index}",
+        return JsonResponse(
+            {"status": "error", "message": "Lesson context not found."}, status=404
         )
-        error_message = "Invalid JSON format."
-        status_code = 400
-    # Generic exception last
+    # Handle any other unexpected errors
     except Exception as e:
+        # Log the specific user if available, otherwise use 'anonymous' or similar
+        username = user.username if user and user.is_authenticated else "unknown"
         logger.exception(
             "Unexpected error handling interaction for user %s, lesson %s.",
-            user.username,
+            username,
             f"{syllabus_id}:{module_index}:{lesson_index}",
             exc_info=e,
         )
-        error_message = "An unexpected error occurred."
-        status_code = 500
-
-    # --- Return JSON Response ---
-    if error_message:
         return JsonResponse(
-            {"status": "error", "message": error_message}, status=status_code
+            {"status": "error", "message": "An unexpected error occurred."}, status=500
         )
-    else:
-        return JsonResponse(response_data, status=status_code)
 
 
-@login_required
 @require_POST  # This view only handles POST requests for triggering generation
-def generate_lesson_content_async(
+async def generate_lesson_content_async(  # Make async
     request: HttpRequest, syllabus_id: str, module_index: int, lesson_index: int
 ) -> JsonResponse:
     """
@@ -430,7 +492,15 @@ def generate_lesson_content_async(
     Called via AJAX if the initial page load finds no existing content.
     Returns the generated content as HTML.
     """
-    user: "User" = request.user  # type: ignore[assignment]
+    # Explicitly type hint before check
+    user = await request.auser()  # type: ignore[assignment]
+    if not user.is_authenticated:
+        # Handle unauthenticated user for AJAX request
+        return JsonResponse(
+            {"status": "error", "message": "Authentication required."}, status=401
+        )
+    # After this check, user cannot be AnonymousUser
+    user = cast(User, user)  # Explicit cast using imported User
     logger.info(
         "Async content generation requested for lesson %s:%s:%s by user %s",
         syllabus_id,
@@ -442,7 +512,8 @@ def generate_lesson_content_async(
     try:
         # Fetch lesson context (reuse logic from other views)
         # No need for syllabus/module objects here, just the lesson
-        lesson = get_object_or_404(
+        get_lesson_async = sync_to_async(get_object_or_404)
+        lesson = await get_lesson_async(
             Lesson,
             module__syllabus__pk=syllabus_id,
             module__module_index=module_index,
@@ -450,9 +521,14 @@ def generate_lesson_content_async(
         )
 
         # Call the service to get or create content
-        lesson_content = services.get_or_create_lesson_content(lesson)
+        lesson_content = await content_service.get_or_create_lesson_content(
+            lesson
+        )  # Add await
 
-        if lesson_content and isinstance(lesson_content.content, dict):
+        # Add isinstance check to help mypy with the awaited result type
+        if isinstance(lesson_content, LessonContent) and isinstance(
+            lesson_content.content, dict
+        ):
             raw_exposition_value = lesson_content.content.get("exposition", "")
 
             # Check for double encoding: If the value itself is a JSON string containing 'exposition'
@@ -536,66 +612,136 @@ def generate_lesson_content_async(
         )
 
 
+@login_required
+@require_GET
+def check_lesson_content_status(
+    _: HttpRequest, syllabus_id: str, module_index: int, lesson_index: int
+) -> JsonResponse:
+    """Check the current status of lesson content generation."""
+    try:
+        lesson = get_object_or_404(
+            Lesson,
+            module__syllabus__pk=syllabus_id,
+            module__module_index=module_index,
+            lesson_index=lesson_index,
+        )
+
+        lesson_content = LessonContent.objects.filter(lesson=lesson).first()
+
+        if not lesson_content:
+            # If no content exists, it's effectively not found from the client's perspective
+            return JsonResponse(
+                {"status": "error", "message": "Lesson content not found."}, status=404
+            )
+
+        status = lesson_content.status or LessonContent.StatusChoices.PENDING
+
+        # Defensive: handle legacy empty status
+        if not status:
+            status = LessonContent.StatusChoices.PENDING
+
+        response_data = {"status": status}
+
+        if status == LessonContent.StatusChoices.COMPLETED:
+            content = lesson_content.content
+            exposition_value = None
+            if isinstance(content, dict):
+                exposition_value = content.get("exposition")
+            if exposition_value:
+                cleaned = clean_exposition_string(exposition_value)
+                html_content = markdownify(cleaned)
+                response_data["html_content"] = mark_safe(html_content)
+            else:
+                response_data["status"] = LessonContent.StatusChoices.FAILED
+                response_data["error"] = (
+                    "Lesson content is marked complete but missing exposition."
+                )
+        elif (
+            status == LessonContent.StatusChoices.FAILED
+        ):  # ERROR is not a valid status
+            response_data["error"] = "Lesson content generation failed."
+
+        return JsonResponse(response_data)
+
+    except Lesson.DoesNotExist:
+        # If the lesson itself doesn't exist, return 404
+        return JsonResponse(
+            {"status": "error", "message": "Lesson not found."}, status=404
+        )
+    except Exception as e:
+        return JsonResponse({"status": "ERROR", "error": str(e)})
+
+
 # @login_required # Cannot use with async view, check manually
 @require_GET  # Use GET as it's triggered by a link click
-async def change_difficulty_view(request: HttpRequest, syllabus_id: uuid.UUID) -> HttpResponse:
+async def change_difficulty_view(
+    request: HttpRequest, syllabus_id: uuid.UUID
+) -> HttpResponse:
     """Handles the request to switch to a lower difficulty syllabus."""
     user = await request.auser()
     if not user.is_authenticated:
         # Handle unauthenticated user
-        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            return JsonResponse({'success': False, 'error': 'Authentication required'}, status=401)
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return JsonResponse(
+                {"success": False, "error": "Authentication required"}, status=401
+            )
         messages.error(request, "You must be logged in to change syllabus difficulty.")
         return redirect(settings.LOGIN_URL + "?next=" + request.path)
 
     # Check if this is an AJAX request
-    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
-    
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
     try:
         # Fetch the current syllabus
-        current_syllabus = await sync_to_async(Syllabus.objects.get)(pk=syllabus_id, user=user)
+        current_syllabus = await sync_to_async(Syllabus.objects.get)(
+            pk=syllabus_id, user=user
+        )
         current_level = current_syllabus.level
         topic = current_syllabus.topic
-        
+
         # Determine the next lower level
         new_level = get_lower_difficulty(current_level)
         if new_level is None:
             if is_ajax:
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Already at lowest difficulty level'
-                })
+                return JsonResponse(
+                    {"success": False, "error": "Already at lowest difficulty level"}
+                )
             messages.info(request, "You are already at the lowest difficulty level.")
             return redirect(reverse("syllabus:detail", args=[syllabus_id]))
-        
+
         # Log the change
-        logger.info(f"Changing difficulty for syllabus {syllabus_id} (User: {user.pk}) from '{current_level}' to '{new_level}' for topic '{topic}'")
-        
+        logger.info(
+            f"Changing difficulty for syllabus {syllabus_id} (User: {user.pk}) from '{current_level}' to "
+            f"'{new_level}' for topic '{topic}'"
+        )
+
         # Generate the syllabus synchronously (no background tasks)
         # Use the new synchronous service method
         new_syllabus_id = await syllabus_service.get_or_generate_syllabus_sync(
             topic=topic, level=new_level, user=user
         )
-        
+
         # Get the URL for the new syllabus
-        new_syllabus_url = reverse('syllabus:detail', args=[new_syllabus_id])
-        
+        new_syllabus_url = reverse("syllabus:detail", args=[new_syllabus_id])
+
         if is_ajax:
-            return JsonResponse({
-                'success': True,
-                'redirect_url': new_syllabus_url
-            })
+            return JsonResponse({"success": True, "redirect_url": new_syllabus_url})
         else:
             # Fallback for non-AJAX requests (though unlikely with the JS approach)
             return redirect(new_syllabus_url)
-            
+
     except Exception as e:
         logger.error(f"Error during difficulty change process: {e}", exc_info=True)
         if is_ajax:
-            return JsonResponse({
-                'success': False,
-                'error': str(e) # Provide a generic error or specific if safe
-            }, status=500)
-        messages.error(request, "An unexpected error occurred while changing the difficulty.")
+            return JsonResponse(
+                {
+                    "success": False,
+                    "error": str(e),  # Provide a generic error or specific if safe
+                },
+                status=500,
+            )
+        messages.error(
+            request, "An unexpected error occurred while changing the difficulty."
+        )
         # Redirect to dashboard or a relevant error page for non-AJAX
         return redirect(reverse("dashboard"))

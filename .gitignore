@@ -13,4 +13,4 @@ wheels/
 /uv.lock
 /.mypy_cache
 /.pytest_cache
-/techtree_django.log
+/techtree_django.log*

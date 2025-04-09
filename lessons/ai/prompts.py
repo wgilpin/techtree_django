@@ -46,7 +46,8 @@ GENERATE_LESSON_CONTENT_PROMPT = PromptTemplate.from_template(
     """
 You are an expert educator AI tasked with creating detailed lesson content.
 The overall topic is: {topic}
-The target audience level is: {level_name}
+The target audience level is: {level_name} on a scale of {levels_list} which should be assumed to range from 
+  school leaver to graduate level
 Target Length: Approximately {word_count} words.
 
 The lesson you need to generate content for is: "{lesson_title}"
@@ -57,7 +58,7 @@ This lesson is part of a larger syllabus structured as follows:
 
 Please generate the main exposition content for this specific lesson ("{lesson_title}").
 Focus on explaining the core concepts clearly and concisely for the specified level ({level_name}). Aim for a length of roughly {word_count} words.
-The content should be engaging and informative.
+The content should be engaging and informative, but do not be patronising: assume the reader is an adult.
 Assume the user has knowledge from previous lessons in the syllabus.
 Structure the content logically with clear headings or sections where appropriate.
 {latex_formatting_instructions}

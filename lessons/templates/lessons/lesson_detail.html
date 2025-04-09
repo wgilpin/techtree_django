@@ -45,7 +45,7 @@
     <div class="row">
         <div class="col-md-8">
             <h2>Lesson Content</h2>
-            <div id="lesson-content-area" class="mb-4 p-3 border rounded bg-light">
+            <div id="lesson-content-area" class="mb-4 p-3 border rounded bg-light" data-content-status="{{ content_status }}">
                 {% if exposition_content is not None %}
                     {{ exposition_content|markdownify }} {# Render existing content #}
                 {% else %}
@@ -269,74 +269,132 @@ document.addEventListener('DOMContentLoaded', function() {
     // --- Initial Task Display ---
     displayActiveTask(currentLessonState.active_exercise || currentLessonState.active_assessment);
 
-    // --- Asynchronous Content Loading ---
-    if (loadingMessage) {
-        console.log("Loading message found, fetching content asynchronously...");
-        // Construct the URL for the async content generation endpoint
-        // We need a new URL pattern for this, let's assume '/lessons/.../generate_content/' for now
-        const contentUrl = window.location.pathname + 'generate_content/'; // Adjust if needed
+    const initialStatus = lessonContentArea.dataset.contentStatus;
+    console.log('Initial lesson content status:', initialStatus);
 
+    if (initialStatus === 'COMPLETED') {
+        renderMath(document.body);
+    } else if (initialStatus === 'GENERATING') {
+        console.log('Lesson content is generating, starting polling...');
+        startPollingForContent();
+    } else if (initialStatus === 'FAILED' || initialStatus === 'ERROR') {
+        lessonContentArea.innerHTML = `
+            <div class="alert alert-danger" role="alert">
+                <strong>Error loading lesson content:</strong> Generation failed. Please try refreshing or contact support.
+            </div>`;
+        if (loadingMessage) loadingMessage.style.display = 'none';
+        if (chatSectionContainer) chatSectionContainer.style.display = 'block';
+    } else {
+        console.log('Lesson content status is PENDING or NOT_FOUND, triggering generation...');
+        triggerContentGeneration();
+    }
+
+    function triggerContentGeneration() {
+        const contentUrl = window.location.pathname + 'generate_content/';
         fetch(contentUrl, {
-            method: 'POST', // Use POST to trigger generation
+            method: 'POST',
             headers: {
                 'X-CSRFToken': csrfToken,
                 'X-Requested-With': 'XMLHttpRequest',
-                'Content-Type': 'application/json' // Indicate we expect JSON back
-            },
-            // body: JSON.stringify({}) // No body needed for simple trigger? Or pass lesson ID? Let's assume no body for now.
+                'Content-Type': 'application/json'
+            }
         })
         .then(response => {
             if (!response.ok) {
                 return response.json().then(err => { throw new Error(err.error || `HTTP error ${response.status}`); });
             }
-            // Check if response body exists before parsing JSON
-            const contentType = response.headers.get("content-type");
-            if (contentType && contentType.indexOf("application/json") !== -1) {
-                return response.json();
-            } else {
-                // Handle non-JSON responses (like unexpected HTML error pages)
-                return response.text().then(text => {
-                    throw new Error(`Received non-JSON response (Status: ${response.status}): ${text.substring(0, 100)}...`);
-                });
-            }
+            return response.json();
         })
         .then(data => {
-            // Hide loading message regardless of success or failure now
             if (loadingMessage) loadingMessage.style.display = 'none';
-            if (chatSectionContainer) chatSectionContainer.style.display = 'block'; // Show chat section
-
+            if (chatSectionContainer) chatSectionContainer.style.display = 'block';
             if (data.status === 'success' && data.html_content) {
-                console.log("Content received successfully.");
-                lessonContentArea.innerHTML = data.html_content; // Inject the HTML
-                renderMath(lessonContentArea); // Render MathJax only within the updated area
+                lessonContentArea.innerHTML = data.html_content;
+                renderMath(lessonContentArea);
             } else {
-                // Handle specific error status from backend or missing content
                 const errorMessage = data.error || "Content generation failed or returned invalid data.";
-                console.error("Failed to load content:", errorMessage);
-                // Use Bootstrap alert for better visibility
                 lessonContentArea.innerHTML = `
                     <div class="alert alert-danger" role="alert">
-                        <strong>Error loading lesson content:</strong> ${errorMessage} Please try refreshing the page or contact support if the problem persists.
+                        <strong>Error loading lesson content:</strong> ${errorMessage}
                     </div>`;
             }
         })
         .catch(error => {
-            // Hide loading message in case of fetch failure
             if (loadingMessage) loadingMessage.style.display = 'none';
-            if (chatSectionContainer) chatSectionContainer.style.display = 'block'; // Show chat section even on error
-
-            console.error('Error fetching lesson content:', error);
-            // Use Bootstrap alert for better visibility
+            if (chatSectionContainer) chatSectionContainer.style.display = 'block';
             lessonContentArea.innerHTML = `
                 <div class="alert alert-danger" role="alert">
-                    <strong>Error loading lesson content:</strong> ${error.message}. Please try refreshing the page or contact support if the problem persists.
+                    <strong>Error loading lesson content:</strong> ${error.message}
                 </div>`;
         });
-    } else {
-         // If content was loaded initially, render math immediately for the whole body
-         renderMath(document.body); // Render the whole body initially
     }
 
+    function startPollingForContent() {
+        const statusUrl = window.location.pathname + 'check_content_status/';
+        let attempts = 0;
+        const maxAttempts = 20;
+        const pollInterval = 3000; // 3 seconds
+
+        function poll() {
+            attempts++;
+            console.log(`Polling attempt ${attempts}...`);
+            fetch(statusUrl, {
+                method: 'GET',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Poll response:', data);
+                if (data.status === 'COMPLETED' && data.html_content) {
+                    lessonContentArea.innerHTML = data.html_content;
+                    renderMath(lessonContentArea);
+                    if (loadingMessage) loadingMessage.style.display = 'none';
+                    if (chatSectionContainer) chatSectionContainer.style.display = 'block';
+                } else if (data.status === 'FAILED' || data.status === 'ERROR') {
+                    lessonContentArea.innerHTML = `
+                        <div class="alert alert-danger" role="alert">
+                            <strong>Error loading lesson content:</strong> ${data.error || 'Generation failed.'}
+                        </div>`;
+                    if (loadingMessage) loadingMessage.style.display = 'none';
+                    if (chatSectionContainer) chatSectionContainer.style.display = 'block';
+                } else if (data.status === 'GENERATING') {
+                    if (attempts < maxAttempts) {
+                        setTimeout(poll, pollInterval);
+                    } else {
+                        lessonContentArea.innerHTML = `
+                            <div class="alert alert-warning" role="alert">
+                                Lesson generation is taking longer than expected. Please try refreshing the page or try again later.
+                            </div>`;
+                        if (loadingMessage) loadingMessage.style.display = 'none';
+                        if (chatSectionContainer) chatSectionContainer.style.display = 'block';
+                    }
+                } else {
+                    // Unexpected status, stop polling
+                    lessonContentArea.innerHTML = `
+                        <div class="alert alert-danger" role="alert">
+                            <strong>Error loading lesson content:</strong> Unexpected status: ${data.status}
+                        </div>`;
+                    if (loadingMessage) loadingMessage.style.display = 'none';
+                    if (chatSectionContainer) chatSectionContainer.style.display = 'block';
+                }
+            })
+            .catch(error => {
+                console.error('Polling error:', error);
+                lessonContentArea.innerHTML = `
+                    <div class="alert alert-danger" role="alert">
+                        <strong>Error loading lesson content:</strong> ${error.message}
+                    </div>`;
+                if (loadingMessage) loadingMessage.style.display = 'none';
+                if (chatSectionContainer) chatSectionContainer.style.display = 'block';
+            });
+        }
+
+        poll();
+    }
+
+    // Function to append a message to the chat history with bubble styling
     // Function to append a message to the chat history with bubble styling
     function appendMessage(sender, messageContent) {
         const messageContainer = document.createElement('div');
@@ -376,94 +434,100 @@ document.addEventListener('DOMContentLoaded', function() {
         // Let's refine this: remove it when the *first* message is added by JS.
     }
 
-    chatForm.addEventListener('submit', function(event) {
-        event.preventDefault(); // Prevent default form submission
+    // --- Event Delegation for Chat Form Submission ---
+    chatSectionContainer.addEventListener('submit', function(event) {
+        // Check if the submitted element is the chat form
+        if (event.target.id === 'chat-form') {
+            console.log('Chat form submit event triggered via delegation.'); // Debug log
+            event.preventDefault(); // Prevent default form submission
+            console.log('Default form submission prevented.'); // Debug log
 
-        const userMessage = userMessageInput.value.trim();
-        if (!userMessage) {
-            return; // Don't send empty messages
-        }
+            const userMessage = userMessageInput.value.trim();
+            if (!userMessage) {
+                return; // Don't send empty messages
+            }
 
-        const isActiveTask = !!(currentLessonState.active_exercise || currentLessonState.active_assessment);
-        const submissionType = isActiveTask ? 'answer' : 'chat';
+            const isActiveTask = !!(currentLessonState.active_exercise || currentLessonState.active_assessment);
+            const submissionType = isActiveTask ? 'answer' : 'chat';
 
-        // Append user message immediately (optimistic update)
-        appendMessage('user', userMessage + (isActiveTask ? ' (Answer)' : '')); // Indicate if it's an answer
-        
-        // Clear the input field
-        userMessageInput.value = ''; // Clear input
-        userMessageInput.placeholder = "Type your message or answer here..."; // Reset placeholder
+            // Append user message immediately (optimistic update)
+            appendMessage('user', userMessage + (isActiveTask ? ' (Answer)' : '')); // Indicate if it's an answer
 
-        // Remove 'No history' placeholder if it's still there
-        const currentNoHistoryP = chatHistory.querySelector('p');
-         if (currentNoHistoryP && currentNoHistoryP.textContent.includes('No conversation history yet.')) {
-            currentNoHistoryP.remove();
-        }
+            // Clear the input field
+            userMessageInput.value = ''; // Clear input
+            userMessageInput.placeholder = "Type your message or answer here..."; // Reset placeholder
 
-        // Send message to the server
-        fetch(window.location.pathname + 'interact/', { // Post to the interaction URL
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': csrfToken,
-                'X-Requested-With': 'XMLHttpRequest' // Standard header for AJAX requests
-            },
-            body: JSON.stringify({
-                message: userMessage,
-                submission_type: submissionType // Indicate if it's chat or answer
+            // Remove 'No history' placeholder if it's still there
+            const currentNoHistoryP = chatHistory.querySelector('p');
+            if (currentNoHistoryP && currentNoHistoryP.textContent.includes('No conversation history yet.')) {
+                currentNoHistoryP.remove();
+            }
+
+            // Send message to the server
+            fetch(window.location.pathname + 'interact/', { // Post to the interaction URL
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken,
+                    'X-Requested-With': 'XMLHttpRequest' // Standard header for AJAX requests
+                },
+                body: JSON.stringify({
+                    message: userMessage,
+                    submission_type: submissionType // Indicate if it's chat or answer
+                })
             })
-        })
-        .then(response => {
-            if (!response.ok) {
-                // Attempt to get error details from response body
-                return response.json().then(err => {
-                    throw new Error(err.error || `HTTP error! status: ${response.status}`);
-                }).catch(() => {
-                    // Fallback if response body is not JSON or empty
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                });
-            }
-            return response.json();
-        })
-        .then(data => {
-            // Update state based on response (important!)
-            if (data.lesson_state) {
-                 try {
-                    currentLessonState = data.lesson_state; // Update local state
-                    console.log("Updated Lesson State:", currentLessonState); // Debugging
-                    // Re-render the active task based on the new state
-                    displayActiveTask(currentLessonState.active_exercise || currentLessonState.active_assessment);
-                 } catch (e) {
-                     console.error("Error processing updated lesson state:", e);
-                     appendMessage('system', 'Error: Could not process state update from server.');
-                 }
-            } else {
-                 console.warn("No lesson_state received in response. State might be stale.");
-            }
+            .then(response => {
+                if (!response.ok) {
+                    // Attempt to get error details from response body
+                    return response.json().then(err => {
+                        throw new Error(err.error || `HTTP error! status: ${response.status}`);
+                    }).catch(() => {
+                        // Fallback if response body is not JSON or empty
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                // Update state based on response (important!)
+                if (data.lesson_state) {
+                     try {
+                        currentLessonState = data.lesson_state; // Update local state
+                        console.log("Updated Lesson State:", currentLessonState); // Debugging
+                        // Re-render the active task based on the new state
+                        displayActiveTask(currentLessonState.active_exercise || currentLessonState.active_assessment);
+                     } catch (e) {
+                         console.error("Error processing updated lesson state:", e);
+                         appendMessage('system', 'Error: Could not process state update from server.');
+                     }
+                } else {
+                     console.warn("No lesson_state received in response. State might be stale.");
+                }
 
-            // Display assistant message if provided
-            if (data.assistant_message) {
-                appendMessage('assistant', data.assistant_message);
-            } else if (!data.error) { // Don't log error if server already sent one
-                console.warn('Assistant message missing in response, but no error reported:', data);
-                // Don't display an error here, maybe the action didn't warrant a message (e.g., just state update)
-            }
+                // Display assistant message if provided
+                if (data.assistant_message) {
+                    appendMessage('assistant', data.assistant_message);
+                } else if (!data.error) { // Don't log error if server already sent one
+                    console.warn('Assistant message missing in response, but no error reported:', data);
+                    // Don't display an error here, maybe the action didn't warrant a message (e.g., just state update)
+                }
 
-            // Handle potential errors returned in the JSON response body
-            if (data.error) {
-                console.error('Server returned error:', data.error);
-                appendMessage('system', `Error: ${data.error}`);
-                // Potentially restore user input?
+                // Handle potential errors returned in the JSON response body
+                if (data.error) {
+                    console.error('Server returned error:', data.error);
+                    appendMessage('system', `Error: ${data.error}`);
+                    // Potentially restore user input?
+                    // userMessageInput.value = userMessage;
+                }
+            })
+            .catch(error => {
+                console.error('Error sending chat message:', error);
+                // Display error in chat history
+                appendMessage('system', `Error: Could not send message. ${error.message}`);
+                // Optionally, restore the user's message in the input field
                 // userMessageInput.value = userMessage;
-            }
-        })
-        .catch(error => {
-            console.error('Error sending chat message:', error);
-            // Display error in chat history
-            appendMessage('system', `Error: Could not send message. ${error.message}`);
-            // Optionally, restore the user's message in the input field
-            // userMessageInput.value = userMessage; 
-        });
+            });
+        } // End if (event.target.id === 'chat-form')
     });
 });
 

@@ -98,6 +98,14 @@ class CoreModelTests(TestCase):
         expected_str = f"Content for Lesson {self.lesson.pk}"
         self.assertEqual(str(self.lesson_content), expected_str)
 
+
+    def test_lesson_content_status_field(self):
+        """Test LessonContent model has status field with correct default."""
+        # Retrieve the instance created in setUpTestData
+        content = LessonContent.objects.get(pk=self.lesson_content.pk)
+        # Check the default status
+        self.assertEqual(content.status, LessonContent.StatusChoices.PENDING)
+
     def test_user_progress_creation(self):
         """Test UserProgress model instance creation and __str__."""
         self.assertEqual(self.user_progress.user, self.user)

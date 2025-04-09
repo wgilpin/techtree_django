@@ -238,6 +238,14 @@ class Lesson(models.Model):
 class LessonContent(models.Model):
     """Stores the actual content for a lesson, likely in JSON format."""
 
+    class StatusChoices(models.TextChoices):
+        """Defines the possible statuses for lesson content generation."""
+
+        PENDING = "PENDING", _("Pending")
+        GENERATING = "GENERATING", _("Generating")
+        COMPLETED = "COMPLETED", _("Completed")
+        FAILED = "FAILED", _("Failed")
+
     content_id: models.UUIDField = models.UUIDField(
         primary_key=True, default=uuid.uuid4, editable=False
     )
@@ -250,6 +258,17 @@ class LessonContent(models.Model):
     content: models.JSONField = models.JSONField(
         help_text="The structured content of the lesson (e.g., text, exercises)."
     )
+    status = models.CharField(
+        _("generation status"),
+        max_length=20,
+        choices=StatusChoices.choices,
+        default=StatusChoices.PENDING,
+        db_index=True,
+        help_text="The generation status of the lesson content.",
+    )
+
+    objects = models.Manager()  # Explicitly define manager for linters
+
     created_at: models.DateTimeField = models.DateTimeField(
         auto_now_add=True, help_text="Timestamp when the content was created."
     )

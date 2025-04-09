@@ -7,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from uuid import UUID
 
+from lessons.content_service import trigger_first_lesson_generation # Import function directly
 from asgiref.sync import sync_to_async
 
 from core.exceptions import ApplicationError, NotFoundError
@@ -259,6 +260,8 @@ class SyllabusService:
                 f"Found existing COMPLETED syllabus ID {syllabus_obj.syllabus_id} for "
                 f"Topic='{topic}', Level='{level}', User='{user_pk_str}'"
             )
+            # Trigger first lesson generation
+            asyncio.create_task(trigger_first_lesson_generation(syllabus_obj.syllabus_id))
             return syllabus_obj.syllabus_id
         except Syllabus.DoesNotExist:
             logger.info(
@@ -312,6 +315,8 @@ class SyllabusService:
                     await placeholder_syllabus.asave(update_fields=["status", "updated_at"])
 
                 logger.info(f"Successfully generated syllabus synchronously for ID: {placeholder_syllabus.syllabus_id}")
+                # Trigger first lesson generation
+                asyncio.create_task(trigger_first_lesson_generation(placeholder_syllabus.syllabus_id))
                 return placeholder_syllabus.syllabus_id
 
             except Exception as e:
@@ -351,6 +356,8 @@ class SyllabusService:
                 f"Topic='{topic}', Level='{level}', User='{user_pk_str}'"
             )
             # Return the ID of the existing completed syllabus
+            # Trigger first lesson generation
+            asyncio.create_task(trigger_first_lesson_generation(syllabus_obj.syllabus_id))
             return syllabus_obj.syllabus_id
 
         except Syllabus.DoesNotExist:
@@ -436,6 +443,8 @@ class SyllabusService:
                          # This case indicates a deeper issue, potentially DB transaction rollback
 
                     logger.info(f"Successfully generated syllabus content for ID: {placeholder_id}")
+                    # Trigger first lesson generation
+                    asyncio.create_task(trigger_first_lesson_generation(placeholder_id))
 
                 except Exception as e: # Catch any error during generation
                     logger.exception(f"Error in background syllabus generation task for ID {placeholder_id}: {e}")

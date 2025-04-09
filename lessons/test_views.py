@@ -1,3 +1,6 @@
+from unittest.mock import AsyncMock
+import unittest.mock
+from django.http import HttpRequest
 # lessons/test_views.py
 # pylint: disable=no-member
 
@@ -73,6 +76,18 @@ class LessonViewsTestCase(TestCase):
         self.client.login(username="testuser", password="password")
         # Refresh progress object in case a previous test modified it (though mocks should prevent this)
         self.progress.refresh_from_db()
+        self._auser_patcher = unittest.mock.patch.object(
+            HttpRequest,
+            "auser",
+            new_callable=unittest.mock.AsyncMock,
+            return_value=self.user,
+            create=True
+        )
+        self._auser_mock = self._auser_patcher.start()
+
+    def tearDown(self):
+        super().tearDown()
+        self._auser_patcher.stop()
 
     # Removed incorrect patch @patch('lessons.services.get_lesson_state_and_history')
     def test_lesson_detail_context_with_exposition(self):
@@ -211,8 +226,8 @@ class LessonViewsTestCase(TestCase):
 
     # --- Tests for handle_lesson_interaction view ---
 
-    @patch("lessons.services.handle_chat_message")
-    @patch("lessons.services.get_lesson_state_and_history")
+    @patch("lessons.views.interaction_service.handle_chat_message")
+    @patch("lessons.views.state_service.get_lesson_state_and_history", new_callable=unittest.mock.AsyncMock)
     def test_handle_lesson_interaction_chat_success(
         self, mock_get_state, mock_handle_chat
     ):
@@ -270,8 +285,8 @@ class LessonViewsTestCase(TestCase):
             submission_type="chat",
         )
 
-    @patch("lessons.services.handle_chat_message")
-    @patch("lessons.services.get_lesson_state_and_history")
+    @patch("lessons.views.interaction_service.handle_chat_message")
+    @patch("lessons.views.state_service.get_lesson_state_and_history", new_callable=unittest.mock.AsyncMock)
     def test_handle_lesson_interaction_answer_success(
         self, mock_get_state, mock_handle_chat
     ):
@@ -323,8 +338,8 @@ class LessonViewsTestCase(TestCase):
             submission_type="answer",
         )
 
-    @patch("lessons.services.handle_chat_message")
-    @patch("lessons.services.get_lesson_state_and_history")
+    @patch("lessons.views.interaction_service.handle_chat_message")
+    @patch("lessons.views.state_service.get_lesson_state_and_history", new_callable=unittest.mock.AsyncMock)
     def test_handle_lesson_interaction_assessment_success(
         self, mock_get_state, mock_handle_chat
     ):
@@ -376,7 +391,7 @@ class LessonViewsTestCase(TestCase):
             submission_type="assessment",
         )
 
-    @patch("lessons.services.get_lesson_state_and_history")  # Correct patch target
+    @patch("lessons.views.state_service.get_lesson_state_and_history", new_callable=unittest.mock.AsyncMock)
     def test_handle_lesson_interaction_invalid_json(self, mock_get_state):
         """Test interaction with invalid JSON payload."""
         # Need to ensure get_lesson_state_and_history is called even with bad JSON
@@ -401,8 +416,8 @@ class LessonViewsTestCase(TestCase):
             lesson=self.lesson,
         )
 
-    @patch("lessons.services.handle_chat_message")  # Correct patch target
-    @patch("lessons.services.get_lesson_state_and_history")  # Correct patch target
+    @patch("lessons.views.interaction_service.handle_chat_message")
+    @patch("lessons.views.state_service.get_lesson_state_and_history", new_callable=unittest.mock.AsyncMock)
     def test_handle_lesson_interaction_service_error(
         self, mock_get_state, mock_handle_chat
     ):
@@ -419,7 +434,7 @@ class LessonViewsTestCase(TestCase):
         self.assertEqual(response.status_code, 500)
         response_json = response.json()
         self.assertEqual(response_json["status"], "error")
-        self.assertIn("An unexpected error occurred", response_json["message"])
+        self.assertIn("Failed to process interaction", response_json["message"])
         mock_get_state.assert_called_once()
         mock_handle_chat.assert_called_once()
 
@@ -431,11 +446,11 @@ class LessonViewsTestCase(TestCase):
             self.interaction_url, data=post_data, content_type="application/json"
         )
         # Should redirect to login page (login URL doesn't need namespacing usually)
-        login_url = reverse("login")
-        expected_redirect = f"{login_url}?next={self.interaction_url}"
-        self.assertRedirects(
-            response, expected_redirect, status_code=302, fetch_redirect_response=False
-        )
+        # Async view returns 401 for unauthenticated AJAX, not redirect
+        self.assertEqual(response.status_code, 401)
+        response_json = response.json()
+        self.assertEqual(response_json.get('status'), 'error')
+        self.assertIn('Authentication required', response_json.get('message', ''))
 
     def test_handle_lesson_interaction_post_only(self):
         """Test that the interaction endpoint only accepts POST."""
@@ -463,7 +478,7 @@ class LessonViewsTestCase(TestCase):
         self.assertEqual(response_json["status"], "error")
         self.assertIn("Lesson context not found", response_json["message"])
 
-    @patch("lessons.services.get_lesson_state_and_history")
+    @patch("lessons.views.state_service.get_lesson_state_and_history", new_callable=unittest.mock.AsyncMock)
     def test_handle_lesson_interaction_missing_progress(self, mock_get_state):
         """Test interaction when UserProgress cannot be found for the user/lesson."""
         # Simulate the service returning None for progress
@@ -474,7 +489,7 @@ class LessonViewsTestCase(TestCase):
             self.interaction_url, data=post_data, content_type="application/json"
         )
 
-        self.assertEqual(response.status_code, 500)  # View returns 500 in this case
+        self.assertEqual(response.status_code, 404)  # View now returns 404 for missing progress
         response_json = response.json()
         self.assertEqual(response_json["status"], "error")
         self.assertIn("Could not load user progress", response_json["message"])
@@ -485,7 +500,7 @@ class LessonViewsTestCase(TestCase):
             lesson=self.lesson,
         )
 
-    @patch("lessons.services.get_lesson_state_and_history")
+    @patch("lessons.views.state_service.get_lesson_state_and_history", new_callable=unittest.mock.AsyncMock)
     def test_handle_lesson_interaction_empty_message(self, mock_get_state):
         """Test interaction with an empty message payload."""
         mock_get_state.return_value = (self.progress, self.lesson_content, [])
@@ -503,8 +518,8 @@ class LessonViewsTestCase(TestCase):
         self.assertIn("Message cannot be empty", response_json["message"])
         mock_get_state.assert_called_once()  # Should still fetch state first
 
-    @patch("lessons.services.handle_chat_message")
-    @patch("lessons.services.get_lesson_state_and_history")
+    @patch("lessons.views.interaction_service.handle_chat_message")
+    @patch("lessons.views.state_service.get_lesson_state_and_history", new_callable=unittest.mock.AsyncMock)
     def test_handle_lesson_interaction_service_returns_none(
         self, mock_get_state, mock_handle_chat
     ):
