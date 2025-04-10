@@ -1,19 +1,17 @@
 """Views for the syllabus app."""
 
 import logging
-from typing import Callable, cast
-import asyncio
-import asyncio
 
-# Removed sync_to_async import
-# Removed sync_to_async import
-
-from django.http import HttpRequest, HttpResponse, Http404
-from django.shortcuts import render, redirect
+from django.http import Http404, HttpRequest, HttpResponse
+from django.shortcuts import redirect, render
 from django.urls import reverse
 
-from core.exceptions import NotFoundError, ApplicationError
+from core.exceptions import ApplicationError, NotFoundError
+from taskqueue.models import AITask
+from taskqueue.tasks import process_ai_task  # type: ignore[attr-defined]  # pylint: disable=no-name-in-module
+
 from .services import SyllabusService
+
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +19,6 @@ logger = logging.getLogger(__name__)
 syllabus_service = SyllabusService()
 
 
-
-# Removed @login_required decorator
 def syllabus_landing(request: HttpRequest) -> HttpResponse:
     """
     Placeholder view for the main syllabus page.
@@ -34,144 +30,232 @@ def syllabus_landing(request: HttpRequest) -> HttpResponse:
     return render(request, "syllabus/landing.html", context)
 
 
-# Removed @login_required decorator
-# Keep this view async as it calls an async service
-async def generate_syllabus_view(request: HttpRequest) -> HttpResponse:
-    """Handles the generation or retrieval of a syllabus."""
-    user = await request.auser()  # Use async user fetch
-    if not user.is_authenticated:
-        # Handle redirect for POST request appropriately, maybe return error or redirect GET
-        # For simplicity, redirecting GET part of login flow
-        return redirect(
-            f"{reverse('login')}?next={reverse('syllabus:landing')}"
-        )  # Redirect to landing after login
+# pylint: disable=no-member
+def generate_syllabus_view(request: HttpRequest) -> HttpResponse:
+    """
+    Handles syllabus generation by creating a background task and redirecting to a waiting page.
+    """
+    if not request.user.is_authenticated:
+        return redirect(f"{reverse('login')}?next={reverse('syllabus:landing')}")
+
     if request.method == "POST":
         topic = request.POST.get("topic", "").strip()
         level = request.POST.get("level", "beginner").strip()
-        # user is fetched asynchronously above
 
         if not topic:
-            # Handle error: topic is required
-            # Add messages framework or pass error to context
             logger.warning("Syllabus generation request missing topic.")
-            # Redirect back or render form with error
-            return redirect(reverse("syllabus:landing"))  # Or render form with error
-
-        try:
-            # Use the user object fetched with await request.auser()
-            logger.info(
-                f"Generating syllabus for user {user.pk}: Topic='{topic}', Level='{level}'"
-            )
-            # Launch syllabus generation in a background thread to detach from request lifecycle
-            # Fire-and-forget: run the async function in a new event loop inside a thread
-            asyncio.create_task(
-                syllabus_service.get_or_generate_syllabus(topic=topic, level=level, user=user)
-            )
-
-            # Create a placeholder UUID to redirect immediately
-            # Alternatively, you might want to pre-create a placeholder object here synchronously
-            # For now, redirect to landing or a generic progress page
-            # If you want to pass a UUID, consider creating a sync placeholder first
-            # But since original code awaited the UUID, we lose that here
-            # So, redirect to landing or a fixed progress page
             return redirect(reverse("syllabus:landing"))
 
-        except ApplicationError as e:
-            logger.error(f"Error generating syllabus: {e}", exc_info=True)
-            # Handle error display to user
-            # Add error message
-            return redirect(reverse("syllabus:landing"))  # Or render form with error
-        except Exception as e:
-            logger.exception(f"Unexpected error during syllabus generation: {e}")
-            # Handle error display to user
-            # Add error message
-            return redirect(reverse("syllabus:landing"))  # Or render form with error
+        try:
 
-    # If GET or other methods, redirect to landing (or show form)
+            # Create the task record
+            # pylint: disable=no-member
+            task = AITask.objects.create(  # type: ignore[attr-defined]
+                task_type=AITask.TaskType.SYLLABUS_GENERATION,
+                input_data={
+                    "topic": topic,
+                    "knowledge_level": level,
+                    "user_id": request.user.id,
+                },
+                user=request.user,
+            )
+
+            # Schedule the background task
+            process_ai_task(str(task.task_id))
+
+            # Redirect to a waiting/progress page (to be implemented)
+            return redirect(reverse("syllabus:landing"))  # Placeholder
+
+        except Exception as e:
+            logger.exception("Error creating syllabus background task: %s", str(e))
+            return redirect(reverse("syllabus:landing"))
+
+    # GET or other methods
     return redirect(reverse("syllabus:landing"))
 
 
-# Changed back to sync def
 def syllabus_detail(request: HttpRequest, syllabus_id: str) -> HttpResponse:
-    """Displays the details of a specific syllabus."""
-    # Use sync user check
+    """
+    Displays the details of a specific syllabus, based on background task status.
+    """
     if not request.user.is_authenticated:
         return redirect(f"{reverse('login')}?next={request.path}")
+
     try:
-        # Call the sync service method
-        syllabus_data = syllabus_service.get_syllabus_by_id_sync(syllabus_id)
-        # Ensure the user has access to this syllabus (optional, depends on requirements)
-        # if syllabus_data.get("user_id") != str(request.user.pk) and syllabus_data.get("user_id") is not None:
-        #     raise Http404("Syllabus not found or access denied.")
+        # Find the latest syllabus generation task for this syllabus
+        task = (
+            AITask.objects.filter(
+                syllabus__syllabus_id=syllabus_id,
+                task_type=AITask.TaskType.SYLLABUS_GENERATION,
+            )
+            .order_by("-created_at")
+            .first()
+        )
 
-        context = {"syllabus": syllabus_data}
-        # Use standard render
+        if not task:
+            logger.warning(f"No background task found for syllabus {syllabus_id}")
+            return redirect(reverse("syllabus:landing"))
+
+        if task.status in [AITask.TaskStatus.PENDING, AITask.TaskStatus.PROCESSING]:
+            # Redirect to or render a waiting page
+            return render(
+                request,
+                "syllabus/wait.html",
+                {"task_id": task.task_id, "syllabus_id": syllabus_id},
+            )
+
+        if task.status == AITask.TaskStatus.FAILED:
+            # Show error page or retry option
+            context = {
+                "error_message": task.error_message or "Syllabus generation failed.",
+                "syllabus_id": syllabus_id,
+                "task_id": task.task_id,
+            }
+            return render(request, "syllabus/error.html", context)
+
+        # If completed, display the result data
+        syllabus_data = task.result_data or {}
+        context = {"syllabus": syllabus_data, "syllabus_id": syllabus_id}
         return render(request, "syllabus/detail.html", context)
-    except NotFoundError as e:
-        raise Http404("Syllabus not found.") from e
-    except ApplicationError as e:
+
+    except Exception as e:
         logger.error(f"Error displaying syllabus {syllabus_id}: {e}", exc_info=True)
-        # Handle error display - maybe redirect with message
-        return redirect(reverse("syllabus:landing"))  # Or render an error page
+        return redirect(reverse("syllabus:landing"))
 
 
-# Changed back to sync def
 def module_detail(
     request: HttpRequest, syllabus_id: str, module_index: int
 ) -> HttpResponse:
-    """Displays the details of a specific module."""
+    """
+    Displays the details of a specific module, based on background task status.
+    """
     if not request.user.is_authenticated:
         return redirect(f"{reverse('login')}?next={request.path}")
-    try:
-        # Call the sync service method
-        module_data = syllabus_service.get_module_details_sync(
-            syllabus_id, module_index
-        )
-        # Add access control if necessary
 
-        context = {"module": module_data, "syllabus_id": syllabus_id}
-        # Use standard render
+    try:
+        # Find the latest syllabus generation task for this syllabus
+        task = (
+            AITask.objects.filter(
+                syllabus__syllabus_id=syllabus_id,
+                task_type=AITask.TaskType.SYLLABUS_GENERATION,
+            )
+            .order_by("-created_at")
+            .first()
+        )
+
+        if not task:
+            logger.warning(f"No background task found for syllabus {syllabus_id}")
+            return redirect(reverse("syllabus:landing"))
+
+        if task.status in [AITask.TaskStatus.PENDING, AITask.TaskStatus.PROCESSING]:
+            return render(
+                request,
+                "syllabus/wait.html",
+                {"task_id": task.task_id, "syllabus_id": syllabus_id},
+            )
+
+        if task.status == AITask.TaskStatus.FAILED:
+            context = {
+                "error_message": task.error_message or "Syllabus generation failed.",
+                "syllabus_id": syllabus_id,
+                "task_id": task.task_id,
+            }
+            return render(request, "syllabus/error.html", context)
+
+        # If completed, extract module data from result_data
+        syllabus_data = task.result_data or {}
+        modules = syllabus_data.get("modules", [])
+        module_data = next(
+            (m for m in modules if m.get("module_index") == module_index), None
+        )
+
+        if not module_data:
+            raise Http404("Module not found.")
+
+        context = {
+            "module": module_data,
+            "syllabus_id": syllabus_id,
+            "module_index": module_index,
+        }
         return render(request, "syllabus/module_detail.html", context)
-    except NotFoundError as e:
-        raise Http404("Module not found.") from e
-    except ApplicationError as e:
+
+    except Exception as e:
         logger.error(
             f"Error displaying module {module_index} for syllabus {syllabus_id}: {e}",
             exc_info=True,
         )
-        return redirect(
-            reverse("syllabus:detail", args=[syllabus_id])
-        )  # Redirect to syllabus
+        return redirect(reverse("syllabus:detail", args=[syllabus_id]))
 
 
 # Changed back to sync def
 def lesson_detail(
     request: HttpRequest, syllabus_id: str, module_index: int, lesson_index: int
 ) -> HttpResponse:
-    """Displays the details of a specific lesson."""
+    """
+    Displays the details of a specific lesson, based on background task status.
+    """
     if not request.user.is_authenticated:
         return redirect(f"{reverse('login')}?next={request.path}")
+
     try:
-        # Call the sync service method
-        lesson_data = syllabus_service.get_lesson_details_sync(
-            syllabus_id, module_index, lesson_index
+        # Find the latest syllabus generation task for this syllabus
+        task = (
+            AITask.objects.filter(
+                syllabus__syllabus_id=syllabus_id,
+                task_type=AITask.TaskType.SYLLABUS_GENERATION,
+            )
+            .order_by("-created_at")
+            .first()
         )
-        # Add access control if necessary
+
+        if not task:
+            logger.warning(f"No background task found for syllabus {syllabus_id}")
+            return redirect(reverse("syllabus:landing"))
+
+        if task.status in [AITask.TaskStatus.PENDING, AITask.TaskStatus.PROCESSING]:
+            return render(
+                request,
+                "syllabus/wait.html",
+                {"task_id": task.task_id, "syllabus_id": syllabus_id},
+            )
+
+        if task.status == AITask.TaskStatus.FAILED:
+            context = {
+                "error_message": task.error_message or "Syllabus generation failed.",
+                "syllabus_id": syllabus_id,
+                "task_id": task.task_id,
+            }
+            return render(request, "syllabus/error.html", context)
+
+        # If completed, extract lesson data from result_data
+        syllabus_data = task.result_data or {}
+        modules = syllabus_data.get("modules", [])
+        module_data = next(
+            (m for m in modules if m.get("module_index") == module_index), None
+        )
+        if not module_data:
+            raise Http404("Module not found.")
+
+        lessons = module_data.get("lessons", [])
+        lesson_data = next(
+            (l for l in lessons if l.get("lesson_index") == lesson_index), None
+        )
+        if not lesson_data:
+            raise Http404("Lesson not found.")
 
         context = {
             "lesson": lesson_data,
             "syllabus_id": syllabus_id,
             "module_index": module_index,
+            "lesson_index": lesson_index,
         }
-        # Use standard render
         return render(request, "syllabus/lesson_detail.html", context)
-    except NotFoundError as e:
-        raise Http404("Lesson not found.") from e
-    except ApplicationError as e:
+
+    except Exception as e:
         logger.error(
             f"Error displaying lesson {lesson_index} (module {module_index}, syllabus {syllabus_id}): {e}",
             exc_info=True,
         )
         return redirect(
             reverse("syllabus:module_detail", args=[syllabus_id, module_index])
-        )  # Redirect to module
+        )

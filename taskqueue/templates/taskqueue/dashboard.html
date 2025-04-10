@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+
+{% block title %}Task Queue Dashboard{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Task Queue Dashboard</h1>
+    
+    <div class="row mt-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">Queue Status</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-6">
+                            <div class="card mb-3">
+                                <div class="card-body text-center">
+                                    <h3 class="text-primary">{{ metrics.pending_count }}</h3>
+                                    <p class="mb-0">Pending Tasks</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="card mb-3">
+                                <div class="card-body text-center">
+                                    <h3 class="text-warning">{{ metrics.processing_count }}</h3>
+                                    <p class="mb-0">Processing Tasks</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="card">
+                                <div class="card-body text-center">
+                                    <h3 class="text-success">{{ metrics.completed_count }}</h3>
+                                    <p class="mb-0">Completed (24h)</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="card">
+                                <div class="card-body text-center">
+                                    <h3 class="text-danger">{{ metrics.failed_count }}</h3>
+                                    <p class="mb-0">Failed (24h)</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">Performance Metrics</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-6">
+                            <div class="card mb-3">
+                                <div class="card-body text-center">
+                                    <h3 class="text-info">{{ metrics.avg_processing_time|floatformat:2 }}s</h3>
+                                    <p class="mb-0">Avg. Processing Time</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="card mb-3">
+                                <div class="card-body text-center">
+                                    <h3 class="text-secondary">{{ metrics.scheduled_count }}</h3>
+                                    <p class="mb-0">Scheduled Tasks</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-body text-center">
+                                    <h3>{{ worker_count }}</h3>
+                                    <p class="mb-0">Active Workers</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">Recent Tasks</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Task ID</th>
+                                    <th>Type</th>
+                                    <th>Status</th>
+                                    <th>Created</th>
+                                    <th>Updated</th>
+                                    <th>Attempts</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for task in recent_tasks %}
+                                <tr>
+                                    <td>{{ task.task_id }}</td>
+                                    <td>{{ task.get_task_type_display }}</td>
+                                    <td>
+                                        {% if task.status == 'pending' %}
+                                            <span class="badge bg-primary">Pending</span>
+                                        {% elif task.status == 'processing' %}
+                                            <span class="badge bg-warning">Processing</span>
+                                        {% elif task.status == 'completed' %}
+                                            <span class="badge bg-success">Completed</span>
+                                        {% elif task.status == 'failed' %}
+                                            <span class="badge bg-danger">Failed</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ task.created_at|date:"Y-m-d H:i:s" }}</td>
+                                    <td>{{ task.updated_at|date:"Y-m-d H:i:s" }}</td>
+                                    <td>{{ task.attempt_count }}</td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="6" class="text-center">No tasks found</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">Task Distribution by Type</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        {% for task_type, count in task_type_counts.items %}
+                        <div class="col-md-4">
+                            <div class="card mb-3">
+                                <div class="card-body text-center">
+                                    <h3>{{ count }}</h3>
+                                    <p class="mb-0">{{ task_type }}</p>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mt-4 mb-4">
+        <div class="col-12 text-center">
+            <p>Last updated: {{ metrics.timestamp|date:"Y-m-d H:i:s" }}</p>
+            <a href="{% url 'taskqueue:dashboard' %}" class="btn btn-primary">Refresh</a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Auto-refresh the page every 30 seconds
+    setTimeout(function() {
+        window.location.reload();
+    }, 30000);
+</script>
+{% endblock %}

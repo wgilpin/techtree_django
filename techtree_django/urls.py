@@ -28,4 +28,5 @@ urlpatterns = [
     path("onboarding/", include("onboarding.urls", namespace="onboarding")),
     path("syllabus/", include("syllabus.urls")), # Include syllabus app URLs
     path("lessons/", include("lessons.urls")), # Include lessons app URLs
+    path("", include("taskqueue.urls")),
 ]

@@ -2,7 +2,7 @@
 
 # pylint: disable=broad-exception-caught,singleton-comparison
 
-import asyncio
+# import asyncio  # Removed asyncio import as code is now synchronous
 import copy
 import uuid
 import traceback
@@ -11,7 +11,6 @@ from typing import Dict, Optional, cast, Any, Union  # Added cast, Any, Union
 
 # Standard library imports
 import logging
-from functools import partial
 
 # Third-party imports
 from langgraph.graph import StateGraph
@@ -21,11 +20,8 @@ from langgraph.graph import StateGraph
 from .state import SyllabusState
 from .nodes import (
     search_database,
-    search_internet,
-    generate_syllabus,
     end_node,
     initialize_state,
-    update_syllabus,
     save_syllabus,
 )
 from .config import (
@@ -57,19 +53,11 @@ class SyllabusAI:
         # search_db_partial = partial(nodes.search_database, db_service=self.db_service) # Removed db_service
         # Node functions now handle DB access internally via Django ORM
         search_db_partial = search_database  # Use directly imported function
-        search_internet_partial = partial(
-            search_internet,
-            tavily_client=self.tavily_client,  # Use directly imported function
-        )
-        generate_syllabus_partial = partial(
-            generate_syllabus,
-            llm_model=self.llm_model,  # Use directly imported function
-        )
+        # Removed search_internet and generate_syllabus nodes as per instructions
 
         # Add nodes using the standalone functions from nodes.py
         workflow.add_node("search_database", search_db_partial)
-        workflow.add_node("search_internet", search_internet_partial)
-        workflow.add_node("generate_syllabus", generate_syllabus_partial)
+        # Removed search_internet and generate_syllabus nodes as per instructions
         # Add the save_syllabus node
         workflow.add_node(
             "save_syllabus", save_syllabus
@@ -79,26 +67,9 @@ class SyllabusAI:
         # Define edges and entry point
         workflow.set_entry_point("search_database")  # Start flow by searching DB
 
-        # workflow.add_edge("generate_syllabus", "end_node") # Generation should lead to save
-        workflow.add_edge(
-            "generate_syllabus", "save_syllabus"
-        )  # Connect generation to save
-        workflow.add_edge("save_syllabus", "end_node")  # Saving leads to end
-
-        workflow.add_conditional_edges(
-            "search_database",
-            self._should_search_internet,
-            {
-                "search_internet": "search_internet",
-                "end": "end_node",
-            },  # Route to end if found
-        )
-        workflow.add_edge("search_internet", "generate_syllabus")
-        # workflow.add_edge("generate_syllabus", "end_node") # Generation should lead to save
-        workflow.add_edge(
-            "generate_syllabus", "save_syllabus"
-        )  # Connect generation to save
-        workflow.add_edge("save_syllabus", "end_node")  # Saving leads to end
+        # Removed edges related to search_internet and generate_syllabus nodes
+        workflow.add_edge("search_database", "save_syllabus")
+        workflow.add_edge("save_syllabus", "end_node")
 
         return workflow
 
@@ -136,39 +107,19 @@ class SyllabusAI:
             "user_id": user_id,
         }
 
-    async def get_or_create_syllabus(self) -> SyllabusState: # Make async
-        """Retrieves an existing syllabus or orchestrates the creation of a new one."""
+    def get_or_create_syllabus(self) -> SyllabusState:
+        """
+        Retrieves or generates a syllabus synchronously using the LangGraph workflow.
+        """
         if not self.state:
             raise ValueError("Agent not initialized. Call initialize() first.")
         if not self.graph:
             raise RuntimeError("Graph not compiled.")
-        logger.debug("Starting get_or_create_syllabus graph execution. Initial state: %s", self.state)
 
-        # Run the graph from the entry point ('search_database')
-        final_state_updates = {}
+        logger.debug("Starting synchronous get_or_create_syllabus execution. Initial state: %s", self.state)
+
         try:
-            async def _run_graph():
-                logger.debug("Preparing to enter LangGraph astream loop")
-                steps_yielded = False
-                async for step in self.graph.astream(self.state, config={"recursion_limit": 10}):
-                    steps_yielded = True
-                    node_name = list(step.keys())[0]
-                    logger.debug(f"Starting graph step: {node_name}")
-                    update_value = step[node_name]
-                    if isinstance(update_value, dict):
-                        final_state_updates.update(update_value)
-                    else:
-                        logger.warning(
-                            f"Ignoring non-dict update from node '{node_name}': {update_value}"
-                        )
-                    logger.debug(f"Completed graph step: {node_name}")
-                logger.debug("LangGraph astream loop completed")
-                if not steps_yielded:
-                    logger.debug("LangGraph exited without running any nodes (no steps yielded)")
-
-            await asyncio.wait_for(_run_graph(), timeout=300)
-
-            # Apply accumulated updates to the internal state carefully
+            final_state_updates = self.graph.invoke(self.state, config={"recursion_limit": 10})
             if final_state_updates and self.state:
                 for key, value in final_state_updates.items():
                     if key in SyllabusState.__annotations__:
@@ -177,80 +128,49 @@ class SyllabusAI:
                         logger.warning(
                             f"Ignoring unexpected key '{key}' from graph execution update."
                         )
-
-        except asyncio.TimeoutError:
-            logger.error("Syllabus graph execution timed out after 300 seconds.")
-            raise RuntimeError("Syllabus generation timed out")
-        except asyncio.CancelledError:
-            logger.warning("Syllabus graph execution was cancelled (asyncio.CancelledError). This may be due to timeout or manual interruption.")
-            raise
         except Exception as e:
-            print(f"Error during graph execution in get_or_create_syllabus: {e}")
-            traceback.print_exc()
-            raise RuntimeError("Syllabus graph execution failed.") from e
+            logger.error("Synchronous syllabus graph execution failed: %s", str(e), exc_info=True)
+            raise RuntimeError("Synchronous syllabus graph execution failed") from e
 
-        # The result is the syllabus found or generated, now stored in the updated state
-        syllabus = self.state.get("generated_syllabus") or self.state.get(
-            "existing_syllabus"
-        )
-
+        syllabus = self.state.get("generated_syllabus") or self.state.get("existing_syllabus")
         if not syllabus:
-            print(
-                "Error: Graph execution finished but no valid syllabus found in state."
-            )
-            # Attempt to provide more context if available
-            if self.state and self.state.get("error_generating"):
-                print("Generation fallback structure was used but might be invalid.")
-            raise RuntimeError("Failed to get or create a valid syllabus.")
+            logger.error("Synchronous graph execution finished but no valid syllabus found in state.")
+            raise RuntimeError("Syllabus generation failed")
 
-        print(f"Syllabus get/create finished. Result UID: {syllabus.get('uid', 'N/A')}")
-        # Return the full updated state, not just the syllabus content dict
+        return self.state
+    def get_or_create_syllabus_sync(self) -> SyllabusState:
+        """
+        Synchronously retrieves or generates a syllabus using the LangGraph workflow.
+        """
         if not self.state:
-            # Should not happen if initialization worked, but safety check
-            raise RuntimeError(
-                "Syllabus AI state is unexpectedly None after execution."
-            )
+            raise ValueError("Agent not initialized. Call initialize() first.")
+        if not self.graph:
+            raise RuntimeError("Graph not compiled.")
+
+        logger.debug("Starting synchronous get_or_create_syllabus execution. Initial state: %s", self.state)
+
+        try:
+            final_state_updates = self.graph.invoke(self.state, config={"recursion_limit": 10})
+            if final_state_updates and self.state:
+                for key, value in final_state_updates.items():
+                    if key in SyllabusState.__annotations__:
+                        self.state[key] = value  # type: ignore
+                    else:
+                        logger.warning(
+                            f"Ignoring unexpected key '{key}' from graph execution update."
+                        )
+        except Exception as e:
+            logger.error("Synchronous syllabus graph execution failed: %s", str(e), exc_info=True)
+            raise RuntimeError("Synchronous syllabus graph execution failed") from e
+
+        syllabus = self.state.get("generated_syllabus") or self.state.get("existing_syllabus")
+        if not syllabus:
+            logger.error("Synchronous graph execution finished but no valid syllabus found in state.")
+            raise RuntimeError("Syllabus generation failed")
+
         return self.state
 
-    async def update_syllabus(self, feedback: str) -> SyllabusState:
-        """Updates the current syllabus based on user feedback."""
-        if not self.state:
-            raise ValueError("Agent not initialized.")
-        if not (
-            self.state.get("generated_syllabus") or self.state.get("existing_syllabus")
-        ):
-            raise ValueError("No syllabus loaded to update.")
-        if not self.llm_model:
-            raise RuntimeError("LLM model not configured for updates.")
-        print("Starting syllabus update based on feedback...")
 
-        # Call the update node function directly, passing current state and feedback
-        update_result = await update_syllabus(
-            self.state, feedback, self.llm_model
-        )  # Use directly imported function
-
-        # Update internal state with results carefully
-        if self.state:
-            for key, value in update_result.items():
-                if key in SyllabusState.__annotations__:
-                    self.state[key] = value  # type: ignore
-                else:
-                    logger.warning(
-                        f"Ignoring unexpected key '{key}' from update_syllabus node result."
-                    )
-
-        # Return the syllabus currently in state
-        # (which might be the updated one or original if update failed)
-        syllabus = self.state.get("generated_syllabus") or self.state.get(
-            "existing_syllabus"
-        )
-        if not syllabus:
-            print("Error: Syllabus became invalid after update attempt.")
-            raise RuntimeError("Syllabus became invalid after update attempt.")
-
-        print(f"Syllabus update finished. Result UID: {syllabus.get('uid', 'N/A')}")
-        # Cast to SyllabusState to satisfy mypy
-        return cast(SyllabusState, syllabus)
 
     def save_syllabus(self) -> Dict[str, Optional[str]]:
         """Saves the current syllabus in the state to the database."""

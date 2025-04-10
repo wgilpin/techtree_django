@@ -50,6 +50,8 @@ INSTALLED_APPS = [
     "onboarding.apps.OnboardingConfig",
     "syllabus.apps.SyllabusConfig",
     "lessons.apps.LessonsConfig",
+    "background_task",
+    "taskqueue",
 
     # Django contrib apps
     "django.contrib.admin",
@@ -232,3 +234,18 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Default URL to redirect to after successful login
 LOGIN_REDIRECT_URL = 'dashboard'
+# Django Background Tasks settings
+MAX_ATTEMPTS = 3  # Number of times a task will be attempted
+MAX_RUN_TIME = 3600  # Maximum running time in seconds (1 hour)
+BACKGROUND_TASK_RUN_ASYNC = False  # Run tasks synchronously in the worker
+
+# Fine-tuned worker process settings
+BACKGROUND_TASK_ASYNC_THREADS = 4  # Number of async threads
+BACKGROUND_TASK_PRIORITY_ORDERING = "-priority"  # Order tasks by priority (highest first)
+BACKGROUND_TASK_QUEUE_LIMIT = 50  # Maximum number of tasks to process in one batch
+BACKGROUND_TASK_SLEEP_SECONDS = 5.0  # Time to sleep between task queue polling
+
+# Task queue monitoring
+BACKGROUND_TASK_METRICS_INTERVAL = 15  # Minutes between metrics logging
+BACKGROUND_TASK_METRICS_ENABLED = True  # Enable metrics collection
+

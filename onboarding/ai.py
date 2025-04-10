@@ -1,31 +1,28 @@
 # onboarding/ai.py
 """
-AI logic for the onboarding assessment using LangGraph.
+AI logic for the onboarding assessment using LangChain.
 Manages the flow of asking questions, evaluating answers, and determining user level.
 """
 # pylint: disable=too-many-arguments, too-many-locals
 
-import logging
 import json
-from typing import TypedDict, List, Dict, Any, Optional
+import logging
+import time
+from typing import Any, Dict, List, Optional, TypedDict
 
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import SystemMessage, HumanMessage
-
-from core.constants import (
-    DIFFICULTY_BEGINNER,
-    DIFFICULTY_GOOD_KNOWLEDGE,  # Changed from intermediate
-    DIFFICULTY_ADVANCED,
-)
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_community.tools.tavily_search import TavilySearchResults
 from django.conf import settings
+from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_google_genai import ChatGoogleGenerativeAI
 
-from syllabus.ai.utils import call_with_retry  # Re-use retry logic
+from core.constants import DIFFICULTY_GOOD_KNOWLEDGE  # Changed from intermediate
+from core.constants import DIFFICULTY_ADVANCED, DIFFICULTY_BEGINNER
+
 from .prompts import (
     ASSESSMENT_SYSTEM_PROMPT,
-    GENERATE_QUESTION_PROMPT,
     EVALUATE_ANSWER_PROMPT,
+    GENERATE_QUESTION_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
@@ -151,13 +148,12 @@ class TechTreeAI:
             score=None,
         )
 
-    async def perform_internet_search(self, state: AgentState) -> Dict[str, Any]:
+    def perform_internet_search(self, state: AgentState) -> Dict[str, Any]:
         """Node: Performs internet search based on the topic."""
         logger.info("Performing internet search for topic: %s", state["topic"])
         search_queries = state.get("search_queries", [])
         if not search_queries:
             # Generate search query if none provided (optional based on design)
-            # For now, assume query generation happens elsewhere or is passed in
             logger.warning(
                 "No search queries found in state for topic: %s", state["topic"]
             )
@@ -166,7 +162,6 @@ class TechTreeAI:
             query = search_queries[-1]  # Use the latest query
 
         try:
-            # Call synchronously as invoke seems to be sync in live env
             search_results = self.search_tool.invoke({"query": query})
             logger.info("Search successful for query: %s", query)
             # Append results, don't overwrite
@@ -189,7 +184,7 @@ class TechTreeAI:
                 "search_completed": True,
             }  # Mark search as completed even on error
 
-    async def generate_question(self, state: AgentState) -> Dict[str, Any]:
+    def generate_question(self, state: AgentState) -> Dict[str, Any]:
         """Node: Generates the next assessment question."""
         logger.info("Generating assessment question for topic: %s", state["topic"])
         if not self.llm:
@@ -236,7 +231,6 @@ class TechTreeAI:
         }
 
         try:
-            # Call synchronously as invoke seems to be sync in live env
             response = chain.invoke(prompt_input)
             content = str(response.content).strip()
             logger.debug("Raw question generation response: %s", content)
@@ -265,14 +259,16 @@ class TechTreeAI:
             try:
                 current_difficulty_int = int(llm_difficulty)
                 # Validate range (0-3 based on constants)
-                if not (0 <= current_difficulty_int <= 3):
+                if not 0 <= current_difficulty_int <= 3:
                     logger.warning(
-                        f"LLM returned out-of-range difficulty '{llm_difficulty}', defaulting to {settings.ONBOARDING_DEFAULT_DIFFICULTY}."
+                        f"LLM returned out-of-range difficulty '{llm_difficulty}', defaulting "
+                        f"to {settings.ONBOARDING_DEFAULT_DIFFICULTY}."
                     )
                     current_difficulty_int = settings.ONBOARDING_DEFAULT_DIFFICULTY
             except (ValueError, TypeError):
                 logger.warning(
-                    f"LLM returned non-integer difficulty '{llm_difficulty}', defaulting to {settings.ONBOARDING_DEFAULT_DIFFICULTY}."
+                    f"LLM returned non-integer difficulty '{llm_difficulty}', "
+                    f"defaulting to {settings.ONBOARDING_DEFAULT_DIFFICULTY}."
                 )
                 current_difficulty_int = settings.ONBOARDING_DEFAULT_DIFFICULTY
 
@@ -299,19 +295,11 @@ class TechTreeAI:
             logger.error("Failed to generate question: %s", e, exc_info=True)
             return {"error_message": f"AI question generation failed: {e}"}
 
-    async def evaluate_answer(self, state: AgentState, answer: str) -> Dict[str, Any]:
+    def evaluate_answer(self, state: AgentState, answer: str) -> Dict[str, Any]:
         """Node: Evaluates the user's answer."""
         logger.info("Evaluating answer for topic: %s", state["topic"])
         if not self.llm:
             return {"error_message": "LLM not available"}
-
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                ("system", ASSESSMENT_SYSTEM_PROMPT),
-                ("human", EVALUATE_ANSWER_PROMPT),
-            ]
-        )
-        chain = prompt | self.llm
 
         # --- Manually Format Prompt to bypass potential template parsing issues ---
         current_question_data = (
@@ -358,9 +346,23 @@ class TechTreeAI:
         # chain = prompt_obj | self.llm
 
         try:
-            # Use call_with_retry with the manually formatted messages
-            response = await call_with_retry(self.llm, messages)
-            content = str(response.content).strip()
+            max_attempts = 3
+            last_exception = None
+            content = "NOT GENERATED"
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    response = self.llm.invoke(messages)
+                    content = str(response.content).strip()
+                    break
+                except Exception as e:
+                    logger.warning(f"Attempt {attempt} failed during LLM call: {e}")
+                    last_exception = e
+                    if attempt < max_attempts:
+
+                        time.sleep(1 * attempt)  # simple backoff
+                    else:
+                        raise last_exception
+
             logger.debug("Raw answer evaluation response: %s", content)
 
             # Clean potential markdown fences
@@ -510,7 +512,8 @@ class TechTreeAI:
             and current_difficulty == min_difficulty
         ):
             logger.info(
-                f"Ending assessment: {consecutive_wrong_at_difficulty} consecutive wrong answers at easiest difficulty ({min_difficulty})."
+                f"Ending assessment: {consecutive_wrong_at_difficulty} consecutive wrong "
+                f"answers at easiest difficulty ({min_difficulty})."
             )
             # Optionally add a flag to state here if calculate_final_assessment needs it
             # state['stopped_at_easiest'] = True

@@ -1,6 +1,6 @@
 """Tests for the handle_chat_message service function."""
 
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch, MagicMock, Mock
 from django.test import TransactionTestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -33,12 +33,12 @@ class LessonChatServiceTests(TransactionTestCase):
 
     @patch("lessons.interaction_service.handle_chat_message")
     @patch("lessons.interaction_service.LessonInteractionGraph")
-    async def test_handle_chat_message(self, MockGraph, mock_handle_chat_message):
+    def test_handle_chat_message(self, MockGraph, mock_handle_chat_message):
         user_message = "Hello AI"
         mock_response = {"new_assistant_message": "Hi human!"}
         mock_handle_chat_message.return_value = mock_response
 
-        progress = await UserProgress.objects.acreate(
+        progress = UserProgress.objects.create(
             user=self.user,
             syllabus=self.syllabus,
             module_index=self.module.module_index,
@@ -59,10 +59,10 @@ class LessonChatServiceTests(TransactionTestCase):
 
     @patch("lessons.interaction_service.handle_chat_message")
     @patch("lessons.interaction_service.LessonInteractionGraph")
-    async def test_handle_chat_message_generates_exercise(self, MockGraph, mock_handle_chat_message):
+    def test_handle_chat_message_generates_exercise(self, MockGraph, mock_handle_chat_message):
         mock_handle_chat_message.return_value = {"new_assistant_message": "Here is an exercise"}
 
-        progress = await UserProgress.objects.acreate(
+        progress = UserProgress.objects.create(
             user=self.user,
             syllabus=self.syllabus,
             module_index=self.module.module_index,
@@ -83,10 +83,10 @@ class LessonChatServiceTests(TransactionTestCase):
 
     @patch("lessons.interaction_service.handle_chat_message")
     @patch("lessons.interaction_service.LessonInteractionGraph")
-    async def test_handle_chat_message_evaluates_answer(self, MockGraph, mock_handle_chat_message):
+    def test_handle_chat_message_evaluates_answer(self, MockGraph, mock_handle_chat_message):
         mock_handle_chat_message.return_value = {"new_assistant_message": "Correct!"}
 
-        progress = await UserProgress.objects.acreate(
+        progress = UserProgress.objects.create(
             user=self.user,
             syllabus=self.syllabus,
             module_index=self.module.module_index,
@@ -107,10 +107,10 @@ class LessonChatServiceTests(TransactionTestCase):
 
     @patch("lessons.interaction_service.handle_chat_message")
     @patch("lessons.interaction_service.LessonInteractionGraph")
-    async def test_handle_chat_message_generates_assessment(self, MockGraph, mock_handle_chat_message):
+    def test_handle_chat_message_generates_assessment(self, MockGraph, mock_handle_chat_message):
         mock_handle_chat_message.return_value = {"new_assistant_message": "Here is an assessment"}
 
-        progress = await UserProgress.objects.acreate(
+        progress = UserProgress.objects.create(
             user=self.user,
             syllabus=self.syllabus,
             module_index=self.module.module_index,
@@ -131,10 +131,10 @@ class LessonChatServiceTests(TransactionTestCase):
 
     @patch("lessons.interaction_service.handle_chat_message")
     @patch("lessons.interaction_service.LessonInteractionGraph")
-    async def test_handle_chat_message_evaluates_assessment(self, MockGraph, mock_handle_chat_message):
+    def test_handle_chat_message_evaluates_assessment(self, MockGraph, mock_handle_chat_message):
         mock_handle_chat_message.return_value = {"new_assistant_message": "You got one right."}
 
-        progress = await UserProgress.objects.acreate(
+        progress = UserProgress.objects.create(
             user=self.user,
             syllabus=self.syllabus,
             module_index=self.module.module_index,

@@ -1,47 +1,41 @@
-""" onboarding/test_generating_polling_views.py """
+"""Tests for onboarding syllabus generation and polling views"""
+
 # pylint: disable=redefined-outer-name, unused-argument, no-member
 
 import uuid
+from unittest.mock import patch
 
 import pytest
-from asgiref.sync import sync_to_async
+from django.contrib.auth import get_user_model
 from django.urls import reverse
-from django.contrib.auth import get_user_model # Correct import for User
-from django.http import Http404 # Import Http404 for explicit handling
 
-from core.models import Syllabus # Import only Syllabus from core.models
+from core.models import Syllabus
 
-# Import helpers from conftest
-from .conftest import get_or_create_test_user
+User = get_user_model()
 
-User = get_user_model() # Get the User model
 
-# Mark all tests in this module as async
-pytestmark = pytest.mark.asyncio
-
-# Add teardown to ensure all patches are properly cleaned up
 @pytest.fixture(autouse=True)
 def cleanup_patches():
     """Fixture to clean up any patches that might have leaked."""
     yield
-    from unittest.mock import patch
-    patch.stopall()  # Stop all patches after each test
+    patch.stopall()
 
 
 @pytest.mark.django_db
-async def test_generating_syllabus_view_owner_access(
-    async_client_fixture, logged_in_user
-):
+def test_generating_syllabus_view_owner_access(logged_in_standard_client):
     """Test that the owner can access the generating syllabus page."""
-    user = await logged_in_user
-    # Create a syllabus owned by the user asynchronously
-    create_syllabus_async = sync_to_async(Syllabus.objects.create)
-    syllabus = await create_syllabus_async(
-        user=user, topic="Test Gen Topic", level="Beginner", status=Syllabus.StatusChoices.GENERATING # Use GENERATING
+    user = User.objects.get(username="testskipuser")
+    syllabus = Syllabus.objects.create(
+        user=user,
+        topic="Test Gen Topic",
+        level="Beginner",
+        status=Syllabus.StatusChoices.GENERATING,
     )
 
-    url = reverse("onboarding:generating_syllabus", kwargs={"syllabus_id": syllabus.syllabus_id})
-    response = await async_client_fixture.get(url)
+    url = reverse(
+        "onboarding:generating_syllabus", kwargs={"syllabus_id": syllabus.syllabus_id}
+    )
+    response = logged_in_standard_client.get(url)
 
     assert response.status_code == 200
     assert "onboarding/generating_syllabus.html" in [t.name for t in response.templates]
@@ -50,91 +44,82 @@ async def test_generating_syllabus_view_owner_access(
 
 
 @pytest.mark.django_db
-async def test_generating_syllabus_view_non_owner_redirects(
-    async_client_fixture, logged_in_user
-):
+def test_generating_syllabus_view_non_owner_redirects(logged_in_standard_client):
     """Test that a non-owner is redirected from the generating page."""
-    owner_user = await get_or_create_test_user(username="owner", password="pw")
-    # Create syllabus owned by 'owner'
-    create_syllabus_async = sync_to_async(Syllabus.objects.create)
-    syllabus = await create_syllabus_async(
-        user=owner_user, topic="Owner Topic", level="Beginner", status=Syllabus.StatusChoices.GENERATING # Use GENERATING
+    owner_user = User.objects.create_user(username="owner", password="pw")
+    syllabus = Syllabus.objects.create(
+        user=owner_user,
+        topic="Owner Topic",
+        level="Beginner",
+        status=Syllabus.StatusChoices.GENERATING,
     )
 
-    # Log in as 'testonboard' (logged_in_user fixture)
-    await logged_in_user
+    url = reverse(
+        "onboarding:generating_syllabus", kwargs={"syllabus_id": syllabus.syllabus_id}
+    )
+    response = logged_in_standard_client.get(url)
 
-    url = reverse("onboarding:generating_syllabus", kwargs={"syllabus_id": syllabus.syllabus_id})
-    response = await async_client_fixture.get(url)
-
-    # Expect redirect to dashboard
     assert response.status_code == 302
     assert response.url == reverse("dashboard")
 
 
 @pytest.mark.django_db
-async def test_poll_syllabus_status_view_success(
-    async_client_fixture, logged_in_user
-):
+def test_poll_syllabus_status_view_success(logged_in_standard_client):
     """Test successful polling of syllabus status by the owner."""
-    user = await logged_in_user
-    # Create a syllabus owned by the user asynchronously
-    create_syllabus_async = sync_to_async(Syllabus.objects.create)
-    syllabus_status = Syllabus.StatusChoices.GENERATING # Use GENERATING
-    syllabus = await create_syllabus_async(
+    user = User.objects.get(username="testskipuser")
+    syllabus_status = Syllabus.StatusChoices.GENERATING
+    syllabus = Syllabus.objects.create(
         user=user, topic="Test Poll Topic", level="Beginner", status=syllabus_status
     )
 
-    url = reverse("onboarding:poll_syllabus_status", kwargs={"syllabus_id": syllabus.syllabus_id})
-    response = await async_client_fixture.get(url)
+    url = reverse(
+        "onboarding:poll_syllabus_status", kwargs={"syllabus_id": syllabus.syllabus_id}
+    )
+    response = logged_in_standard_client.get(url)
 
     assert response.status_code == 200
     response_json = response.json()
     assert response_json["status"] == syllabus_status
-    # Implicitly checks that no SynchronousOnlyOperation occurred
 
 
 @pytest.mark.django_db
-async def test_poll_syllabus_status_view_completed(
-    async_client_fixture, logged_in_user
-):
+def test_poll_syllabus_status_view_completed(logged_in_standard_client):
     """Test polling returns syllabus URL when status is COMPLETED."""
-    user = await logged_in_user
-    create_syllabus_async = sync_to_async(Syllabus.objects.create)
+    user = User.objects.get(username="testskipuser")
     syllabus_status = Syllabus.StatusChoices.COMPLETED
-    syllabus = await create_syllabus_async(
+    syllabus = Syllabus.objects.create(
         user=user, topic="Test Complete Poll", level="Expert", status=syllabus_status
     )
 
-    url = reverse("onboarding:poll_syllabus_status", kwargs={"syllabus_id": syllabus.syllabus_id})
-    response = await async_client_fixture.get(url)
+    url = reverse(
+        "onboarding:poll_syllabus_status", kwargs={"syllabus_id": syllabus.syllabus_id}
+    )
+    response = logged_in_standard_client.get(url)
 
     assert response.status_code == 200
     response_json = response.json()
     assert response_json["status"] == syllabus_status
     assert "syllabus_url" in response_json
-    # Check the URL points to the correct syllabus detail view
-    # Need sync_to_async to access syllabus.pk in async context if not already loaded
-    get_syllabus_pk = sync_to_async(lambda s: s.pk)
-    syllabus_pk = await get_syllabus_pk(syllabus)
-    expected_syllabus_url = reverse("syllabus:detail", args=[syllabus_pk])
+    expected_syllabus_url = reverse("syllabus:detail", args=[syllabus.pk])
     assert response_json["syllabus_url"] == expected_syllabus_url
 
 
 @pytest.mark.django_db
-async def test_poll_syllabus_status_view_failed(
-    async_client_fixture, logged_in_user
-):
+def test_poll_syllabus_status_view_failed(logged_in_standard_client):
     """Test polling returns message when status is FAILED."""
-    user = await logged_in_user
-    create_syllabus_async = sync_to_async(Syllabus.objects.create)
+    user = User.objects.get(username="testskipuser")
     syllabus_status = Syllabus.StatusChoices.FAILED
-    syllabus = await create_syllabus_async(
-        user=user, topic="Test Failed Poll", level="Intermediate", status=syllabus_status
+    syllabus = Syllabus.objects.create(
+        user=user,
+        topic="Test Failed Poll",
+        level="Intermediate",
+        status=syllabus_status,
     )
 
-    url = reverse("onboarding:poll_syllabus_status", kwargs={"syllabus_id": syllabus.syllabus_id})
-    response = await async_client_fixture.get(url)
+    url = reverse(
+        "onboarding:poll_syllabus_status", kwargs={"syllabus_id": syllabus.syllabus_id}
+    )
+    response = logged_in_standard_client.get(url)
 
     assert response.status_code == 200
     response_json = response.json()
@@ -144,21 +129,22 @@ async def test_poll_syllabus_status_view_failed(
 
 
 @pytest.mark.django_db
-async def test_poll_syllabus_status_view_non_owner_permission_denied(
-    async_client_fixture, logged_in_user
+def test_poll_syllabus_status_view_non_owner_permission_denied(
+    logged_in_standard_client,
 ):
     """Test polling status for a syllabus owned by another user returns 403."""
-    owner_user = await get_or_create_test_user(username="poll_owner", password="pw")
-    create_syllabus_async = sync_to_async(Syllabus.objects.create)
-    syllabus = await create_syllabus_async(
-        user=owner_user, topic="Poll Owner Topic", level="Beginner", status=Syllabus.StatusChoices.GENERATING # Use GENERATING
+    owner_user = User.objects.create_user(username="poll_owner", password="pw")
+    syllabus = Syllabus.objects.create(
+        user=owner_user,
+        topic="Poll Owner Topic",
+        level="Beginner",
+        status=Syllabus.StatusChoices.GENERATING,
     )
 
-    # Log in as 'testonboard'
-    await logged_in_user
-
-    url = reverse("onboarding:poll_syllabus_status", kwargs={"syllabus_id": syllabus.syllabus_id})
-    response = await async_client_fixture.get(url)
+    url = reverse(
+        "onboarding:poll_syllabus_status", kwargs={"syllabus_id": syllabus.syllabus_id}
+    )
+    response = logged_in_standard_client.get(url)
 
     assert response.status_code == 403
     response_json = response.json()
@@ -167,19 +153,21 @@ async def test_poll_syllabus_status_view_non_owner_permission_denied(
 
 
 @pytest.mark.django_db
-async def test_poll_syllabus_status_view_unauthenticated(
-    async_client_fixture, # No logged_in_user
-):
+def test_poll_syllabus_status_view_unauthenticated():
     """Test polling status when unauthenticated returns 401."""
-    # Create a user and syllabus, but don't log in
-    user = await get_or_create_test_user(username="unauth_user", password="pw")
-    create_syllabus_async = sync_to_async(Syllabus.objects.create)
-    syllabus = await create_syllabus_async(
-        user=user, topic="Unauth Topic", level="Beginner", status=Syllabus.StatusChoices.GENERATING # Use GENERATING
+    unauth_client = __import__("django.test").test.Client()
+    user = User.objects.create_user(username="unauth_user", password="pw")
+    syllabus = Syllabus.objects.create(
+        user=user,
+        topic="Unauth Topic",
+        level="Beginner",
+        status=Syllabus.StatusChoices.GENERATING,
     )
 
-    url = reverse("onboarding:poll_syllabus_status", kwargs={"syllabus_id": syllabus.syllabus_id})
-    response = await async_client_fixture.get(url)
+    url = reverse(
+        "onboarding:poll_syllabus_status", kwargs={"syllabus_id": syllabus.syllabus_id}
+    )
+    response = unauth_client.get(url)
 
     assert response.status_code == 401
     response_json = response.json()
@@ -188,15 +176,12 @@ async def test_poll_syllabus_status_view_unauthenticated(
 
 
 @pytest.mark.django_db
-async def test_poll_syllabus_status_view_not_found(
-    async_client_fixture, logged_in_user
-):
+def test_poll_syllabus_status_view_not_found(logged_in_standard_client):
     """Test polling status for a non-existent syllabus_id returns 404."""
-    await logged_in_user
     non_existent_uuid = uuid.uuid4()
-    url = reverse("onboarding:poll_syllabus_status", kwargs={"syllabus_id": non_existent_uuid})
+    url = reverse(
+        "onboarding:poll_syllabus_status", kwargs={"syllabus_id": non_existent_uuid}
+    )
 
-    # Django's test client automatically handles the Http404 raised by get_object_or_404
-    # and converts it into a 404 response.
-    response = await async_client_fixture.get(url)
+    response = logged_in_standard_client.get(url)
     assert response.status_code == 404

@@ -1,4 +1,3 @@
-from asgiref.sync import async_to_sync
 """
 Service layer for handling user interactions within lessons.
 
@@ -132,9 +131,8 @@ def handle_chat_message(
             progress.pk,
             current_state["current_interaction_mode"],
         )
-        # The graph execution should be synchronous here
         # Access the compiled graph via the 'graph' attribute of the instance
-        output_state_dict = async_to_sync(graph.graph.invoke)(
+        output_state_dict = graph.graph.invoke(
             current_state, {"recursion_limit": 10}
         )
         if not output_state_dict:
@@ -177,7 +175,11 @@ def handle_chat_message(
         current_state["error_message"] = f"Graph invocation failed: {e}"
         progress.lesson_state_json = current_state  # Save state with error
         progress.save(update_fields=["lesson_state_json", "updated_at"])
-        return current_state  # Return state with error message
+        # Return a dictionary indicating the error
+        return {
+            "error": f"Graph invocation failed: {e}",
+            "updated_state": current_state,
+        }
 
     # 5. Save assistant response (if any)
     if assistant_response_content:

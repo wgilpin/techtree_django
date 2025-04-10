@@ -1,7 +1,7 @@
 """Tests for the evaluate_answer node function."""
 
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock
 from typing import cast, Dict, Any, List
 import json
 
@@ -37,11 +37,11 @@ def create_initial_lesson_state(user_message: str) -> LessonState:
 @patch('lessons.ai.nodes._get_llm')
 def test_evaluate_answer_exercise_correct(mock_get_llm):
     """Test evaluating a correct answer for an active exercise."""
-    mock_llm_instance = AsyncMock()
+    mock_llm_instance = MagicMock()
     mock_evaluation = {"score": 1.0, "feedback": "Correct! Well done."}
-    mock_response = AsyncMock()
+    mock_response = MagicMock()
     mock_response.content = json.dumps(mock_evaluation)
-    mock_llm_instance.invoke = AsyncMock(return_value=mock_response)
+    mock_llm_instance.invoke = MagicMock(return_value=mock_response)
     mock_get_llm.return_value = mock_llm_instance
 
     user_message = "The answer is 4."
@@ -77,11 +77,11 @@ def test_evaluate_answer_exercise_correct(mock_get_llm):
 @patch('lessons.ai.nodes._get_llm')
 def test_evaluate_answer_assessment_incorrect(mock_get_llm):
     """Test evaluating an incorrect answer for an active assessment."""
-    mock_llm_instance = AsyncMock()
+    mock_llm_instance = MagicMock()
     mock_evaluation = {"score": 0.2, "feedback": "Not quite, the answer involves loops."}
-    mock_response_incorrect = AsyncMock()
+    mock_response_incorrect = MagicMock()
     mock_response_incorrect.content = json.dumps(mock_evaluation)
-    mock_llm_instance.invoke = AsyncMock(return_value=mock_response_incorrect)
+    mock_llm_instance.invoke = MagicMock(return_value=mock_response_incorrect)
     mock_get_llm.return_value = mock_llm_instance
 
     user_message = "Use recursion."
@@ -131,7 +131,7 @@ def test_evaluate_answer_no_active_task():
 @patch('lessons.ai.nodes._get_llm')
 def test_evaluate_answer_llm_error(mock_get_llm):
     """Test evaluation when LLM call fails."""
-    mock_llm_instance = AsyncMock()
+    mock_llm_instance = MagicMock()
     mock_llm_instance.invoke.side_effect = Exception("LLM Eval Error")
     mock_get_llm.return_value = mock_llm_instance
 
@@ -153,10 +153,10 @@ def test_evaluate_answer_llm_error(mock_get_llm):
 @patch('lessons.ai.nodes._get_llm')
 def test_evaluate_answer_invalid_json(mock_get_llm):
     """Test evaluation when LLM returns invalid JSON."""
-    mock_llm_instance = AsyncMock()
-    mock_response_invalid = AsyncMock()
+    mock_llm_instance = MagicMock()
+    mock_response_invalid = MagicMock()
     mock_response_invalid.content = 'invalid json'
-    mock_llm_instance.invoke = AsyncMock(return_value=mock_response_invalid)
+    mock_llm_instance.invoke = MagicMock(return_value=mock_response_invalid)
     mock_get_llm.return_value = mock_llm_instance
 
     user_message = "Answer."
