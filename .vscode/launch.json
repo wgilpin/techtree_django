@@ -15,6 +15,18 @@
             "django": true,
             "justMyCode": true,
             "envFile": "${workspaceFolder}/.env" // Ensure .env variables are loaded
+        },
+        {
+            "name": "Python: Django process_tasks",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/manage.py",
+            "args": [
+                "process_tasks"
+            ],
+            "django": true,
+            "justMyCode": true,
+            "envFile": "${workspaceFolder}/.env"
         }
     ]
 }
