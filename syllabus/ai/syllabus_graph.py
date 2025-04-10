@@ -2,6 +2,7 @@
 
 # pylint: disable=broad-exception-caught,singleton-comparison
 
+import asyncio
 import copy
 import uuid
 import traceback
@@ -141,37 +142,48 @@ class SyllabusAI:
             raise ValueError("Agent not initialized. Call initialize() first.")
         if not self.graph:
             raise RuntimeError("Graph not compiled.")
-        print("Starting get_or_create_syllabus graph execution...")
+        logger.debug("Starting get_or_create_syllabus graph execution. Initial state: %s", self.state)
 
         # Run the graph from the entry point ('search_database')
         final_state_updates = {}
         try:
-            # Stream the execution, starting with the current state
-            # Use astream for async execution
-            async for step in self.graph.astream(self.state, config={"recursion_limit": 10}): # Use astream
-                node_name = list(step.keys())[0]
-                print(f"Graph Step: {node_name}")
-                # Accumulate all updates from the steps
-                # Ensure the update value is a dictionary
-                update_value = step[node_name]
-                if isinstance(update_value, dict):
-                    final_state_updates.update(update_value)
-                else:
-                    logger.warning(
-                        f"Ignoring non-dict update from node '{node_name}': {update_value}"
-                    )
+            async def _run_graph():
+                logger.debug("Preparing to enter LangGraph astream loop")
+                steps_yielded = False
+                async for step in self.graph.astream(self.state, config={"recursion_limit": 10}):
+                    steps_yielded = True
+                    node_name = list(step.keys())[0]
+                    logger.debug(f"Starting graph step: {node_name}")
+                    update_value = step[node_name]
+                    if isinstance(update_value, dict):
+                        final_state_updates.update(update_value)
+                    else:
+                        logger.warning(
+                            f"Ignoring non-dict update from node '{node_name}': {update_value}"
+                        )
+                    logger.debug(f"Completed graph step: {node_name}")
+                logger.debug("LangGraph astream loop completed")
+                if not steps_yielded:
+                    logger.debug("LangGraph exited without running any nodes (no steps yielded)")
+
+            await asyncio.wait_for(_run_graph(), timeout=300)
 
             # Apply accumulated updates to the internal state carefully
             if final_state_updates and self.state:
                 for key, value in final_state_updates.items():
                     if key in SyllabusState.__annotations__:
-                        # Mypy might still complain about direct assignment, but it's safer than .update()
                         self.state[key] = value  # type: ignore
                     else:
                         logger.warning(
                             f"Ignoring unexpected key '{key}' from graph execution update."
                         )
 
+        except asyncio.TimeoutError:
+            logger.error("Syllabus graph execution timed out after 300 seconds.")
+            raise RuntimeError("Syllabus generation timed out")
+        except asyncio.CancelledError:
+            logger.warning("Syllabus graph execution was cancelled (asyncio.CancelledError). This may be due to timeout or manual interruption.")
+            raise
         except Exception as e:
             print(f"Error during graph execution in get_or_create_syllabus: {e}")
             traceback.print_exc()
@@ -200,7 +212,7 @@ class SyllabusAI:
             )
         return self.state
 
-    def update_syllabus(self, feedback: str) -> SyllabusState:
+    async def update_syllabus(self, feedback: str) -> SyllabusState:
         """Updates the current syllabus based on user feedback."""
         if not self.state:
             raise ValueError("Agent not initialized.")
@@ -213,7 +225,7 @@ class SyllabusAI:
         print("Starting syllabus update based on feedback...")
 
         # Call the update node function directly, passing current state and feedback
-        update_result = update_syllabus(
+        update_result = await update_syllabus(
             self.state, feedback, self.llm_model
         )  # Use directly imported function
 

@@ -94,7 +94,7 @@ async def test_start_assessment_view_success(
     response_json = response.json()
     assert "question" in response_json  # Check for question key on success
     assert response_json["question"] == "Q1?"
-    assert response_json["difficulty"] == 3
+    assert response_json["difficulty"] == "Advanced"
 
     # Check session state asynchronously using helper
     session_data = await get_session_value_sync(
@@ -399,7 +399,7 @@ async def test_submit_answer_view_missing_answer(async_client_fixture, logged_in
     response_json = response.json()
     assert "error" in response_json  # Check correct key
     assert (
-        "Missing answer in JSON payload." in response_json["error"]
+        "Missing 'answer' or 'skip' flag in JSON payload." in response_json["error"]
     )  # Check correct error message
 
 

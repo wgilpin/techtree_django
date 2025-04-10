@@ -1,3 +1,4 @@
+from asgiref.sync import sync_to_async, async_to_sync
 """
 Service layer for handling lesson content generation.
 
@@ -25,6 +26,10 @@ from syllabus.ai.utils import call_with_retry  # type: ignore # Re-use retry log
 from .ai.prompts import GENERATE_LESSON_CONTENT_PROMPT, LATEX_FORMATTING_INSTRUCTIONS
 
 logger = logging.getLogger(__name__)
+
+async def _ainvoke_llm(llm, prompt):
+    return await llm.ainvoke(prompt)
+
 
 
 async def trigger_first_lesson_generation(syllabus_id: uuid.UUID) -> None:  # type: ignore
@@ -193,50 +198,67 @@ async def get_or_create_lesson_content(lesson: Lesson) -> Optional[LessonContent
             logger.info("Found existing COMPLETED content for Lesson ID: %s", lesson.pk)
             return existing_completed
 
-        # 2. Check for existing GENERATING content (async)
-        existing_generating = await LessonContent.objects.filter(  # type: ignore[misc]
+        # 2. Check for existing FAILED content (async) - retry if found
+        existing_failed = await LessonContent.objects.filter(  # type: ignore[misc]
             lesson=lesson,
-            status=LessonContent.StatusChoices.GENERATING.value,  # Use string value
+            status=LessonContent.StatusChoices.FAILED.value,  # Use string value
         ).afirst()
-        if existing_generating:
+        if existing_failed:
             logger.info(
-                "Content generation already IN PROGRESS for Lesson ID: %s", lesson.pk
+                "Found FAILED content for Lesson ID: %s - will retry generation", lesson.pk
             )
-            # Return the placeholder to indicate it's being worked on
-            return existing_generating
+            # Update status to GENERATING to retry
+            existing_failed.status = LessonContent.StatusChoices.GENERATING
+            await existing_failed.asave(update_fields=["status", "updated_at"])
+            # Continue with generation using this as the placeholder
+            placeholder = existing_failed
 
-        # 3. If neither exists (or was FAILED/PENDING), create/update placeholder (async)
-        # aupdate_or_create is atomic for its operation.
-        placeholder, created = await LessonContent.objects.aupdate_or_create(
-            lesson=lesson,
-            defaults={
-                "content": {
-                    "status": "placeholder",
-                    "message": "Content generation initiated.",
+        # 3. Check for existing GENERATING content (async)
+        if not placeholder:  # Only check if we didn't find a FAILED one to retry
+            existing_generating = await LessonContent.objects.filter(  # type: ignore[misc]
+                lesson=lesson,
+                status=LessonContent.StatusChoices.GENERATING.value,  # Use string value
+            ).afirst()
+            if existing_generating:
+                logger.info(
+                    "Content generation already IN PROGRESS for Lesson ID: %s", lesson.pk
+                )
+                # Return the placeholder to indicate it's being worked on
+                return existing_generating
+
+        # 4. If no existing content found, create a new placeholder (async)
+        if not placeholder:
+            # aupdate_or_create is atomic for its operation.
+            placeholder, created = await LessonContent.objects.aupdate_or_create(
+                lesson=lesson,
+                defaults={
+                    "content": {
+                        "status": "placeholder",
+                        "message": "Content generation initiated.",
+                    },
+                    "status": LessonContent.StatusChoices.GENERATING,
                 },
-                "status": LessonContent.StatusChoices.GENERATING,
-            },
-        )
-        if created:
-            logger.info(
-                "Created GENERATING placeholder (ID: %s) for Lesson ID: %s",
-                placeholder.pk,
-                lesson.pk,
             )
-        else:
-            logger.info(
-                "Updated existing record (ID: %s) to GENERATING for Lesson ID: %s",
-                placeholder.pk,
-                lesson.pk,
-            )
+            if created:
+                logger.info(
+                    "Created GENERATING placeholder (ID: %s) for Lesson ID: %s",
+                    placeholder.pk,
+                    lesson.pk,
+                )
+            else:
+                logger.info(
+                    "Updated existing record (ID: %s) to GENERATING for Lesson ID: %s",
+                    placeholder.pk,
+                    lesson.pk,
+                )
 
         # --- Content Generation Logic (moved inside try block) ---
         # 4. Gather context (wrap sync calls)
         module = await sync_to_async(lambda: lesson.module)()
         syllabus = await sync_to_async(lambda: module.syllabus)()  # type: ignore[attr-defined]
-        topic = syllabus.topic
-        level = syllabus.level
-        lesson_title = lesson.title
+        topic = await sync_to_async(lambda: syllabus.topic)()
+        level = await sync_to_async(lambda: syllabus.level)()
+        lesson_title = await sync_to_async(lambda: lesson.title)()
         # Fetching syllabus structure can remain sync for now
         # Run sync helper in async context
         syllabus_structure = await sync_to_async(_fetch_syllabus_structure)(syllabus)
@@ -284,6 +306,7 @@ async def get_or_create_lesson_content(lesson: Lesson) -> Optional[LessonContent
         prompt_input = {
             "topic": topic,
             "level_name": level,
+            "levels_list": list(DIFFICULTY_VALUES.keys()),  # Add available levels
             "word_count": word_count,
             "lesson_title": lesson_title,
             "syllabus_structure_json": syllabus_structure_json,
@@ -298,10 +321,8 @@ async def get_or_create_lesson_content(lesson: Lesson) -> Optional[LessonContent
         try:
             # Use await with the async version of call_with_retry if available,
             # or run the sync llm.invoke in an executor if call_with_retry is sync.
-            # Assuming llm.invoke is sync and call_with_retry is sync:
-            response = await asyncio.to_thread(
-                call_with_retry, llm.invoke, formatted_prompt
-            )
+            # Use the async invoke method directly
+            response = await llm.ainvoke(formatted_prompt)
             generated_text = (
                 str(response.content).strip() if hasattr(response, "content") else ""
             )
@@ -343,9 +364,10 @@ async def get_or_create_lesson_content(lesson: Lesson) -> Optional[LessonContent
                     cleaned_text.removeprefix("```json").removesuffix("```").strip()
                 )
             elif cleaned_text.startswith("```"):
-                cleaned_text = (
-                    cleaned_text.removeprefix("```").removesuffix("```").strip()
-                )
+                pass
+            cleaned_text = (
+                cleaned_text.removeprefix("```").removesuffix("```").strip()
+            )
 
             # Try JSON parsing
             try:  # Attempt to update the placeholder status atomically
@@ -367,48 +389,18 @@ async def get_or_create_lesson_content(lesson: Lesson) -> Optional[LessonContent
                     }
             except json.JSONDecodeError:
                 logger.warning(
-                    "Failed to parse LLM output as JSON for lesson %s.", lesson.pk
-                )
-                # Try regex extraction
-                exposition_match = re.search(
-                    r'"exposition"\s*:\s*"(.*?)"\s*}', cleaned_text, re.DOTALL
-                )
-                if exposition_match:
-                    exposition_content = exposition_match.group(1).replace('\\"', '"')
-                    content_data = {"exposition": exposition_content}
-                    logger.info(
-                        "Successfully extracted exposition via regex for lesson %s.",
-                        lesson.pk,
-                    )
-                else:
-                    content_data = {
-                        "error": "Failed to parse LLM output as JSON.",
-                        "raw_response": cleaned_text,
-                    }
-                    logger.info(
-                        "Storing error structure due to JSON parsing failure for lesson %s.",
-                        lesson.pk,
-                    )
-
-        except Exception as processing_err:
-            logger.error(
-                "Error processing LLM response for lesson %s: %s",
-                lesson.pk,
-                processing_err,
-                exc_info=True,
-            )
-            content_data = {
-                "error": "Failed to process LLM response after generation.",
-                "raw_response": generated_text,
-            }
-            logger.info(
-                "Storing error structure due to post-generation processing error for lesson %s.",
-                lesson.pk,
-            )
+                    "Failed to parse LLM output as JSON for lesson %s.", lesson.pk)
+            placeholder.content = content_data
+            placeholder.status = LessonContent.StatusChoices.COMPLETED
+            await placeholder.asave(update_fields=["content", "status", "updated_at"])
+            return placeholder
+        except Exception:
+            pass
 
         # Update placeholder with final content and status
         placeholder.content = content_data
         # Check if content_data indicates an error during processing
+        logger.info('DEBUG: Saving content_data = %s', content_data)
         if "error" in content_data:
             assert placeholder is not None  # Help mypy
             placeholder.status = LessonContent.StatusChoices.FAILED

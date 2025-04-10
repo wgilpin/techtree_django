@@ -1,3 +1,4 @@
+from asgiref.sync import async_to_sync
 """LangGraph nodes for the lesson interaction graph."""
 
 import json
@@ -274,7 +275,7 @@ def classify_intent(state: LessonState) -> LessonState:
             "active_task_context": active_task_context,
         }
         formatted_prompt = INTENT_CLASSIFICATION_PROMPT.format(**prompt_input)
-        response = call_with_retry(llm.invoke, formatted_prompt)
+        response = async_to_sync(llm.invoke)(formatted_prompt)  # type: ignore
 
         try:
             # Use robust parser
@@ -390,7 +391,7 @@ def generate_chat_response(state: LessonState) -> LessonState:
             "latex_formatting_instructions": LATEX_FORMATTING_INSTRUCTIONS,
         }
         prompt = CHAT_RESPONSE_PROMPT.format(**prompt_input)
-        response = call_with_retry(llm.invoke, prompt)
+        response = async_to_sync(llm.invoke)(prompt)  # type: ignore
         ai_response_content = response.content.strip()
     except Exception as e:
         error_msg = f"LLM call failed during chat response generation: {e}"
@@ -467,7 +468,7 @@ def generate_new_exercise(state: LessonState) -> LessonState:
             "latex_formatting_instructions": LATEX_FORMATTING_INSTRUCTIONS,
         }
         formatted_prompt = GENERATE_EXERCISE_PROMPT.format(**prompt_input)
-        response = call_with_retry(llm.invoke, formatted_prompt)
+        response = async_to_sync(llm.invoke)(formatted_prompt)  # type: ignore
 
         try:
             # Use the robust parser
@@ -684,7 +685,7 @@ def evaluate_answer(state: LessonState) -> LessonState:
             "latex_formatting_instructions": LATEX_FORMATTING_INSTRUCTIONS,
         }
         formatted_prompt = EVALUATE_ANSWER_PROMPT.format(**prompt_input)
-        response = call_with_retry(llm.invoke, formatted_prompt)
+        response = async_to_sync(llm.invoke)(formatted_prompt)  # type: ignore
 
         try:
             # Use robust parser
@@ -810,7 +811,7 @@ def generate_new_assessment(state: LessonState) -> LessonState:
             "latex_formatting_instructions": LATEX_FORMATTING_INSTRUCTIONS,
         }
         formatted_prompt = GENERATE_ASSESSMENT_PROMPT.format(**prompt_input)
-        response = call_with_retry(llm.invoke, formatted_prompt)
+        response = async_to_sync(llm.invoke)(formatted_prompt)  # type: ignore
 
         try:
             # Use robust parser

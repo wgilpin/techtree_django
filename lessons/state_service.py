@@ -16,6 +16,7 @@ from django.utils import timezone as django_timezone
 from core.models import LessonContent
 from core.models import Module  # type: ignore[misc]
 from core.models import ConversationHistory, Lesson, Syllabus, UserProgress
+from asgiref.sync import sync_to_async, async_to_sync
 
 # Import the function needed from the content service
 from .content_service import get_or_create_lesson_content
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _get_conversation_history_sync(progress: UserProgress) -> List[ConversationHistory]:
+def _get_conversation_history_sync(progress):
     """
     Synchronously fetches conversation history for a given progress record.
 
@@ -75,14 +76,14 @@ async def _initialize_lesson_state(
 
     # Basic initial state structure
     initial_state = {
-        "topic": syllabus.topic,
-        "user_knowledge_level": syllabus.level,
-        "lesson_title": lesson.title,
-        "module_title": module.title,
-        "lesson_uid": f"{str(syllabus.pk)}_{module.module_index}_{lesson.lesson_index}",
-        "user_id": str(user.pk),
-        "lesson_db_id": lesson.pk,
-        "content_db_id": str(lesson_content.pk),
+        "topic": await sync_to_async(lambda: syllabus.topic)(),
+        "user_knowledge_level": await sync_to_async(lambda: syllabus.level)(),
+        "lesson_title": await sync_to_async(lambda: lesson.title)(),
+        "module_title": await sync_to_async(lambda: module.title)(),
+        "lesson_uid": f"{str(await sync_to_async(lambda: syllabus.pk)())}_{module.module_index}_{lesson.lesson_index}",
+        "user_id": str(await sync_to_async(lambda: user.pk)()),
+        "lesson_db_id": await sync_to_async(lambda: lesson.pk)(),
+        "content_db_id": str(await sync_to_async(lambda: lesson_content.pk)()),
         "created_at": now_iso,
         "updated_at": now_iso,
         "current_interaction_mode": "chatting",
@@ -98,7 +99,9 @@ async def _initialize_lesson_state(
         "lesson_exposition": exposition_text,
     }
     logger.info(
-        "Initialized state dictionary for lesson %s, user %s", lesson.pk, user.pk
+        "Initialized state dictionary for lesson %s, user %s",
+        await sync_to_async(lambda: lesson.pk)(),
+        await sync_to_async(lambda: user.pk)()
     )
     return initial_state
 

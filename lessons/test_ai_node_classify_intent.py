@@ -1,7 +1,7 @@
 """Tests for the classify_intent node function."""
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from typing import cast, Dict, Any
 
 from lessons.ai.nodes import classify_intent
@@ -39,9 +39,11 @@ def create_initial_lesson_state(user_message: str) -> LessonState:
 @patch('lessons.ai.nodes._get_llm') # Mock the LLM call
 def test_classify_intent_chat(mock_get_llm):
     """Test classifying a general chat message."""
-    mock_llm_instance = MagicMock()
+    mock_llm_instance = AsyncMock()
     # Mock the LLM response to indicate 'chatting' intent
-    mock_llm_instance.invoke.return_value = MagicMock(content='{"intent": "chatting"}')
+    mock_response_chat = MagicMock()
+    mock_response_chat.content = '{"intent": "chatting"}'
+    mock_llm_instance.invoke = AsyncMock(return_value=mock_response_chat)
     mock_get_llm.return_value = mock_llm_instance
 
     user_message = "Tell me more about Python."
@@ -61,8 +63,10 @@ def test_classify_intent_chat(mock_get_llm):
 @patch('lessons.ai.nodes._get_llm')
 def test_classify_intent_request_exercise(mock_get_llm):
     """Test classifying a request for an exercise."""
-    mock_llm_instance = MagicMock()
-    mock_llm_instance.invoke.return_value = MagicMock(content='{"intent": "request_exercise"}')
+    mock_llm_instance = AsyncMock()
+    mock_response_exercise = MagicMock()
+    mock_response_exercise.content = '{"intent": "request_exercise"}'
+    mock_llm_instance.invoke = AsyncMock(return_value=mock_response_exercise)
     mock_get_llm.return_value = mock_llm_instance
 
     user_message = "Give me an exercise."
@@ -79,8 +83,10 @@ def test_classify_intent_request_exercise(mock_get_llm):
 @patch('lessons.ai.nodes._get_llm')
 def test_classify_intent_request_assessment(mock_get_llm):
     """Test classifying a request for an assessment."""
-    mock_llm_instance = MagicMock()
-    mock_llm_instance.invoke.return_value = MagicMock(content='{"intent": "request_assessment"}')
+    mock_llm_instance = AsyncMock()
+    mock_response_assessment = MagicMock()
+    mock_response_assessment.content = '{"intent": "request_assessment"}'
+    mock_llm_instance.invoke = AsyncMock(return_value=mock_response_assessment)
     mock_get_llm.return_value = mock_llm_instance
 
     user_message = "Quiz me."
@@ -97,9 +103,11 @@ def test_classify_intent_request_assessment(mock_get_llm):
 @patch('lessons.ai.nodes._get_llm')
 def test_classify_intent_submit_answer_exercise(mock_get_llm):
     """Test classifying an answer submission when an exercise is active."""
-    mock_llm_instance = MagicMock()
+    mock_llm_instance = AsyncMock()
     # Even if LLM misclassifies, the presence of active_exercise should force submit_answer
-    mock_llm_instance.invoke.return_value = MagicMock(content='{"intent": "chatting"}')
+    mock_response_chat2 = MagicMock()
+    mock_response_chat2.content = '{"intent": "chatting"}'
+    mock_llm_instance.invoke = AsyncMock(return_value=mock_response_chat2)
     mock_get_llm.return_value = mock_llm_instance
 
     user_message = "The answer is B."
@@ -118,8 +126,10 @@ def test_classify_intent_submit_answer_exercise(mock_get_llm):
 @patch('lessons.ai.nodes._get_llm')
 def test_classify_intent_submit_answer_assessment(mock_get_llm):
     """Test classifying an answer submission when an assessment is active."""
-    mock_llm_instance = MagicMock()
-    mock_llm_instance.invoke.return_value = MagicMock(content='{"intent": "chatting"}')
+    mock_llm_instance = AsyncMock()
+    mock_response_chat3 = MagicMock()
+    mock_response_chat3.content = '{"intent": "chatting"}'
+    mock_llm_instance.invoke = AsyncMock(return_value=mock_response_chat3)
     mock_get_llm.return_value = mock_llm_instance
 
     user_message = "My final answer is C."
@@ -137,7 +147,7 @@ def test_classify_intent_submit_answer_assessment(mock_get_llm):
 @patch('lessons.ai.nodes._get_llm')
 def test_classify_intent_llm_error(mock_get_llm):
     """Test intent classification when the LLM call fails."""
-    mock_llm_instance = MagicMock()
+    mock_llm_instance = AsyncMock()
     mock_llm_instance.invoke.side_effect = Exception("LLM Error") # Simulate LLM failure
     mock_get_llm.return_value = mock_llm_instance
 
@@ -157,8 +167,10 @@ def test_classify_intent_llm_error(mock_get_llm):
 @patch('lessons.ai.nodes._get_llm')
 def test_classify_intent_invalid_json(mock_get_llm):
     """Test intent classification when LLM returns invalid JSON."""
-    mock_llm_instance = MagicMock()
-    mock_llm_instance.invoke.return_value = MagicMock(content='{"intent": "chatting') # Invalid JSON
+    mock_llm_instance = AsyncMock()
+    mock_response_invalid = MagicMock()
+    mock_response_invalid.content = '{"intent": "chatting'  # Invalid JSON
+    mock_llm_instance.invoke = AsyncMock(return_value=mock_response_invalid)
     mock_get_llm.return_value = mock_llm_instance
 
     user_message = "Testing invalid JSON."

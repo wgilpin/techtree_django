@@ -1,63 +1,69 @@
-{% extends "base.html" %}
+{% extends 'base.html' %}
 {% load static %}
 
-{% block title %}Onboarding Assessment - {{ topic|default:"New Topic" }}{% endblock %}
+{% block title %}
+  Onboarding Assessment - {{ topic|default:'New Topic' }}
+{% endblock %}
 
 {% block content %}
-<div class="assessment-container" style="max-width: 800px; margin: 2rem auto; background: #fff; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-
-    <h1 style="text-align: center; margin-bottom: 1.5rem;">Assessment: <span id="assessment-topic">{{ topic|default:"Loading..." }}</span></h1>
+  <div class="assessment-container" style="max-width: 800px; margin: 2rem auto; background: #fff; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+    <h1 style="text-align: center; margin-bottom: 1.5rem;">Assessment: <span id="assessment-topic">{{ topic|default:'Loading...' }}</span></h1>
 
     <div id="assessment-area">
-        <div id="question-area" style="margin-bottom: 1.5rem;">
-            <p style="font-weight: bold; margin-bottom: 0.5rem;">Question:</p>
-            <p id="question-counter" style="font-size: 0.9em; color: #666; text-align: right; margin-bottom: 0.5rem;">?</p>
-            <p id="question-text">Loading first question...</p>
-            <p style="font-size: 0.9em; color: #666;">Difficulty: <span id="question-difficulty">...</span></p>
-        </div>
+      <div id="question-area" style="margin-bottom: 1.5rem;">
+        <p style="font-weight: bold; margin-bottom: 0.5rem;">Question:</p>
+        <p id="question-counter" style="font-size: 0.9em; color: #666; text-align: right; margin-bottom: 0.5rem;">?</p>
+        <p id="question-text">Loading first question...</p>
+        <p style="font-size: 0.9em; color: #666;">
+          Difficulty: <span id="question-difficulty">...</span>
+        </p>
+      </div>
 
-        <div id="answer-area" style="margin-bottom: 1.5rem;">
-            <label for="user-answer" style="display: block; margin-bottom: 0.5rem;">Your Answer:</label>
-            <textarea id="user-answer" name="answer" rows="4" style="width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px;"></textarea>
-        </div>
+      <div id="answer-area" style="margin-bottom: 1.5rem;">
+        <label for="user-answer" style="display: block; margin-bottom: 0.5rem;">Your Answer:</label>
+        <textarea id="user-answer" name="answer" rows="4" style="width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px;"></textarea>
+      </div>
 
-        <div id="feedback-area" style="margin-bottom: 1.5rem; padding: 1rem; border-radius: 4px; background-color: #f0f0f0; display: none;">
-            <p style="font-weight: bold; margin-bottom: 0.5rem;">Feedback:</p>
-            <p id="feedback-text"></p>
-        </div>
+      <div id="feedback-area" style="margin-bottom: 1.5rem; padding: 1rem; border-radius: 4px; background-color: #f0f0f0; display: none;">
+        <p style="font-weight: bold; margin-bottom: 0.5rem;">Feedback:</p>
+        <p id="feedback-text"></p>
+      </div>
 
-        <button id="submit-answer-btn" class="primary-button" style="width: 100%;">Submit Answer</button>
+      <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-bottom: 1rem;">
+        <button id="skip-question-btn" class="secondary-button" style="flex: 1; background-color: #bbb; border: 1px solid #ccc; color: #000;">I don't know - Skip</button>
+        <button id="submit-answer-btn" class="primary-button" style="flex: 1;">Submit Answer</button>
+      </div>
     </div>
-    <form action="{% url 'onboarding:skip_assessment' %}" method="post" style="text-align: center; margin-top: 1rem; margin-bottom: 1rem;">
-        {% csrf_token %}
-        <button type="submit" class="secondary-button" style="padding: 0.5rem 1rem; border: 1px solid #ccc; background-color: #bbb; border-radius: 4px; cursor: pointer;">Skip Assessment</button>
-    </form>
 
     <div id="result-area" style="display: none; text-align: center; margin-top: 2rem; padding: 1.5rem; border: 1px solid var(--primary-color); border-radius: 8px; background-color: #e8f5e9;">
-        <h2>Assessment Complete!</h2>
-        <p>Topic: <strong id="result-topic"></strong></p>
-        <p>Assessed Knowledge Level: <strong id="result-level"></strong></p>
-        <p style="margin-bottom: 1rem;">Score: <strong id="result-score"></strong>%</p>
-        <a href="{% url 'dashboard' %}" class="primary-button" style="margin-top: 1rem;">Back to Dashboard</a>
+      <h2>Assessment Complete!</h2>
+      <p>
+        Topic: <strong id="result-topic"></strong>
+      </p>
+      <p>
+        Assessed Knowledge Level: <strong id="result-level"></strong>
+      </p>
+      <p style="margin-bottom: 1rem;">
+        Score: <strong id="result-score"></strong>%
+      </p>
+      <a href="{% url 'dashboard' %}" class="primary-button" style="margin-top: 1rem;">Back to Dashboard</a>
     </div>
 
     <div id="error-area" style="color: var(--error-color); margin-top: 1rem; text-align: center; display: none;">
-        <p id="error-text"></p>
+      <p id="error-text"></p>
     </div>
 
     {# Hidden input to store the start URL provided by the view that renders this template #}
-    <input type="hidden" id="start-assessment-url" value="{{ start_url|default:'' }}">
+    <input type="hidden" id="start-assessment-url" value="{{ start_url|default:'' }}" />
     {# URL for submitting answers #}
-    <input type="hidden" id="submit-answer-url" value="{% url 'onboarding:onboarding_submit' %}">
+    <input type="hidden" id="submit-answer-url" value="{% url 'onboarding:onboarding_submit' %}" />
     {# CSRF token for POST requests #}
     {% csrf_token %}
-
-</div>
-
+  </div>
 {% endblock %}
 
 {% block extra_js %}
-<script>
+  <script>
 document.addEventListener('DOMContentLoaded', function() {
     const topicDisplay = document.getElementById('assessment-topic');
     const questionArea = document.getElementById('question-area');
@@ -126,7 +132,15 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             questionText.textContent = data.question || 'Error: No question received.';
-            questionDifficulty.textContent = data.difficulty || 'N/A';
+            // Construct the "Level X of Y" string using the new data
+            if (data.difficulty_value !== undefined && data.max_difficulty !== undefined) {
+                // Add 1 to difficulty_value because it's 0-based (0-3) -> (1-4)
+                const displayLevel = data.difficulty_value + 1;
+                questionDifficulty.textContent = `Level ${displayLevel} of ${data.max_difficulty}`;
+            } else {
+                // Fallback to the original difficulty name if new data is missing
+                questionDifficulty.textContent = data.difficulty || 'N/A';
+            }
             userAnswerInput.value = ''; // Clear previous answer
             if (data.feedback) {
                 feedbackText.textContent = data.feedback;
@@ -240,7 +254,65 @@ document.addEventListener('DOMContentLoaded', function() {
     // Event listener for the submit button
     submitButton.addEventListener('click', submitAnswer);
 
+    const skipButton = document.getElementById('skip-question-btn');
     // Start the assessment automatically if startUrl is present
+
+    async function skipQuestion() {
+        let responseData = null; // Variable to store response data
+        console.log("Skipping question");
+        submitButton.disabled = true;
+        skipButton.disabled = true; // Disable skip button too
+        submitButton.innerHTML = '<span class="spinner"></span> Skipping'; // Use submit button for feedback
+        hideError();
+        feedbackArea.style.display = 'none'; // Hide old feedback
+
+        try {
+            // Prepare data with a skip flag
+            const payload = { skip: true };
+
+            const response = await fetch(submitUrl, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrfToken,
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(payload),
+            });
+
+            if (!response.ok) {
+                 let errorMsg = `HTTP error! status: ${response.status}`;
+                 try {
+                     const errorData = await response.json();
+                     errorMsg = errorData.error || errorMsg;
+                 } catch(e) { /* Ignore if response is not JSON */ }
+                throw new Error(errorMsg);
+            }
+
+            responseData = await response.json(); // Store data
+            console.log("Skip question response:", responseData);
+
+            if (responseData.error) {
+                throw new Error(responseData.error);
+            }
+
+            updateAssessmentUI(responseData);
+
+        } catch (error) {
+            console.error('Error skipping question:', error);
+            displayError(error.message || 'Could not skip question.');
+            submitButton.innerHTML = 'Submit Answer'; // Reset button text
+        } finally {
+            // Re-enable buttons after processing, only if assessment is not complete
+            if (responseData && !responseData.is_complete) {
+                submitButton.disabled = false;
+                skipButton.disabled = false;
+            }
+        }
+    }
+
+    // Event listener for the skip button
+    skipButton.addEventListener('click', skipQuestion);
     if (startUrl) {
         startAssessment();
     } else {

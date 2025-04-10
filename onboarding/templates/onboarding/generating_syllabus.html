@@ -80,7 +80,7 @@ document.addEventListener('DOMContentLoaded', function() {
             } else if (data.status === 'FAILED') {
                 console.error(`Syllabus generation FAILED. Message: ${data.message}`);
                 clearInterval(pollInterval); // Stop polling
-                displayError(data.message || 'Syllabus generation failed.');
+                displayError('Syllabus generation failed. Please click "Back" to return to the syllabus creation page and try again.');
             } else if (data.status === 'PENDING' || data.status === 'GENERATING') {
                 // Continue polling for these statuses
                 console.log(`Syllabus generation status: ${data.status}...`);

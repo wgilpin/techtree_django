@@ -1,3 +1,4 @@
+from asgiref.sync import async_to_sync
 """
 Service layer for handling user interactions within lessons.
 
@@ -133,9 +134,9 @@ def handle_chat_message(
         )
         # The graph execution should be synchronous here
         # Access the compiled graph via the 'graph' attribute of the instance
-        output_state_dict = graph.graph.invoke(
+        output_state_dict = async_to_sync(graph.graph.invoke)(
             current_state, {"recursion_limit": 10}
-        )  # Use invoke for sync call
+        )
         if not output_state_dict:
             raise ValueError("Graph invocation returned None.")
 
@@ -144,6 +145,7 @@ def handle_chat_message(
         # Extract potential messages and errors *from the dictionary* before casting
         graph_error_message = output_state_dict.get("error_message")
         new_msg = output_state_dict.get("new_assistant_message")
+        assistant_response_content = output_state_dict.get("new_assistant_message")
         feedback_msg = output_state_dict.get("evaluation_feedback")
 
         # assistant_response_content is already defined outside the try block
@@ -175,7 +177,7 @@ def handle_chat_message(
         current_state["error_message"] = f"Graph invocation failed: {e}"
         progress.lesson_state_json = current_state  # Save state with error
         progress.save(update_fields=["lesson_state_json", "updated_at"])
-        return None  # Indicate failure
+        return current_state  # Return state with error message
 
     # 5. Save assistant response (if any)
     if assistant_response_content:
@@ -211,6 +213,8 @@ def handle_chat_message(
 
     # 6. Update and save UserProgress with the full new state from the graph
     try:
+        if output_state and not assistant_response_content:
+            assistant_response_content = output_state.get("new_assistant_message")
         # Remove temporary context keys before saving if they exist
         # Need to operate on the dictionary before saving
         final_state_dict = dict(output_state) if output_state else {}
@@ -248,9 +252,11 @@ def handle_chat_message(
             if assistant_response_content
             else None
         )
+    if not assistant_response_content:
+        assistant_response_content = "Sorry, I couldn't generate a response."
 
     # Return the assistant message and the final state upon successful completion
     return {
-        "assistant_message": assistant_response_content,
+        "assistant_message": assistant_response_content or "Sorry, I couldn't generate a response.",
         "updated_state": final_state_dict,  # Return the final state dict
     }

@@ -213,7 +213,7 @@ LOGGING = {
 
 # Onboarding Assessment Settings
 ONBOARDING_DEFAULT_DIFFICULTY = 3 # Example: Scale 1-5
-ONBOARDING_HARD_DIFFICULTY_THRESHOLD = 4 # Example: Difficulty >= 4 is 'hard'
+ONBOARDING_HARD_DIFFICULTY_THRESHOLD = 3 # Match constants.py (Advanced=3)
 ASSESSMENT_STATE_KEY = 'assessment_state' # Session key
 
 TAVILY_API_KEY = env('TAVILY_API_KEY', default=None)

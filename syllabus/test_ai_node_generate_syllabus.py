@@ -3,6 +3,7 @@
 import json
 from typing import cast
 from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from core.constants import  DIFFICULTY_KEY_TO_DISPLAY
@@ -19,8 +20,9 @@ def cleanup_patches():
 # --- Test generate_syllabus ---
 
 
-@patch("syllabus.ai.nodes.call_with_retry", new_callable=MagicMock)
-def test_generate_syllabus_success(mock_call_retry):
+@pytest.mark.asyncio
+@patch("syllabus.ai.nodes.call_with_retry", new_callable=AsyncMock)
+async def test_generate_syllabus_success(mock_call_retry):
     """Test successful syllabus generation with valid JSON response."""
     topic = "Gen Success Topic"
     level = "good knowledge"  # Use correct key
@@ -49,9 +51,8 @@ def test_generate_syllabus_success(mock_call_retry):
     # Use .text attribute and ensure it's exactly the JSON string via dumps
     mock_llm_response_obj.text = json.dumps(mock_response_content)
     mock_call_retry.return_value = mock_llm_response_obj
-
     # Call the node function
-    result_state_dict = generate_syllabus(initial_state, llm_model=mock_llm)
+    result_state_dict = await generate_syllabus(initial_state, llm_model=mock_llm)
     result_state = cast(SyllabusState, result_state_dict)
 
     # Assertions
@@ -77,8 +78,8 @@ def test_generate_syllabus_success(mock_call_retry):
     mock_call_retry.assert_called_once()
     call_args, _ = mock_call_retry.call_args
     assert (
-        call_args[0] == mock_llm.generate_content
-    )  # Check it targeted the generate_content method
+        call_args[0] == mock_llm.generate_content_async
+    )  # Check it targeted the generate_content_async method
     # Check that the prompt string was passed as the second argument
     assert isinstance(call_args[1], str)
     assert topic in call_args[1]
@@ -86,8 +87,9 @@ def test_generate_syllabus_success(mock_call_retry):
     assert "Relevant search result 1" in call_args[1]
 
 
-@patch("syllabus.ai.nodes.call_with_retry", new_callable=MagicMock)
-def test_generate_syllabus_invalid_json(mock_call_retry):
+@pytest.mark.asyncio
+@patch("syllabus.ai.nodes.call_with_retry", new_callable=AsyncMock)
+async def test_generate_syllabus_invalid_json(mock_call_retry):
     """Test syllabus generation with invalid JSON response (fallback)."""
     topic = "Invalid JSON Topic"
     level = "beginner"
@@ -100,9 +102,9 @@ def test_generate_syllabus_invalid_json(mock_call_retry):
     mock_llm_response_obj = MagicMock()
     mock_llm_response_obj.text = mock_invalid_json_string  # Use .text
     mock_call_retry.return_value = mock_llm_response_obj
-
     # Call the node function
-    result_state_dict = generate_syllabus(initial_state, llm_model=mock_llm)
+    result_state_dict = await generate_syllabus(initial_state, llm_model=mock_llm)
+    result_state = cast(SyllabusState, result_state_dict)
     result_state = cast(SyllabusState, result_state_dict)
 
     # Assertions for fallback behavior
@@ -129,8 +131,9 @@ def test_generate_syllabus_invalid_json(mock_call_retry):
     mock_call_retry.assert_called_once()
 
 
-@patch("syllabus.ai.nodes.call_with_retry", new_callable=MagicMock)
-def test_generate_syllabus_llm_failure(mock_call_retry):
+@pytest.mark.asyncio
+@patch("syllabus.ai.nodes.call_with_retry", new_callable=AsyncMock)
+async def test_generate_syllabus_llm_failure(mock_call_retry):
     """Test syllabus generation when the LLM call fails."""
     topic = "LLM Fail Topic"
     level = "advanced"  # Use correct key from constants
@@ -140,9 +143,9 @@ def test_generate_syllabus_llm_failure(mock_call_retry):
     # Mock the LLM model and simulate failure in call_with_retry
     mock_llm = MagicMock()
     mock_call_retry.side_effect = Exception("LLM API Error")
-
     # Call the node function
-    result_state_dict = generate_syllabus(initial_state, llm_model=mock_llm)
+    result_state_dict = await generate_syllabus(initial_state, llm_model=mock_llm)
+    result_state = cast(SyllabusState, result_state_dict)
     result_state = cast(SyllabusState, result_state_dict)
 
     # Assertions for fallback behavior due to LLM error
@@ -164,15 +167,16 @@ def test_generate_syllabus_llm_failure(mock_call_retry):
     mock_call_retry.assert_called_once()
 
 
-def test_generate_syllabus_no_llm():
+@pytest.mark.asyncio
+async def test_generate_syllabus_no_llm():
     """Test syllabus generation when llm_model is None."""
     topic = "No LLM Topic"
     level = "beginner"
     initial_state_dict = initialize_state(None, topic=topic, knowledge_level=level)
     initial_state = cast(SyllabusState, initial_state_dict)
-
     # Call the node function with llm_model=None
-    result_state_dict = generate_syllabus(initial_state, llm_model=None)
+    result_state_dict = await generate_syllabus(initial_state, llm_model=None)
+    result_state = cast(SyllabusState, result_state_dict)
     result_state = cast(SyllabusState, result_state_dict)
 
     # Assertions for fallback behavior due to missing LLM

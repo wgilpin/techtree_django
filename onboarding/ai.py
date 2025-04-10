@@ -10,9 +10,11 @@ import json
 from typing import TypedDict, List, Dict, Any, Optional
 
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import SystemMessage, HumanMessage
+
 from core.constants import (
     DIFFICULTY_BEGINNER,
-    DIFFICULTY_GOOD_KNOWLEDGE, # Changed from intermediate
+    DIFFICULTY_GOOD_KNOWLEDGE,  # Changed from intermediate
     DIFFICULTY_ADVANCED,
 )
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -49,7 +51,9 @@ class AgentState(
     current_target_difficulty: int
     consecutive_wrong: int
     wikipedia_content: str
-    consecutive_wrong_at_current_difficulty: int # New: Track wrongs at the *current* difficulty
+    consecutive_wrong_at_current_difficulty: (
+        int  # New: Track wrongs at the *current* difficulty
+    )
 
     google_results: List[str]
     search_completed: bool
@@ -135,7 +139,6 @@ class TechTreeAI:
             current_question_difficulty=settings.ONBOARDING_DEFAULT_DIFFICULTY,  # Use setting
             current_target_difficulty=settings.ONBOARDING_DEFAULT_DIFFICULTY,  # Use setting
             consecutive_wrong_at_current_difficulty=0,
-
             consecutive_wrong=0,
             wikipedia_content="",
             google_results=[],
@@ -211,7 +214,8 @@ class TechTreeAI:
             3: DIFFICULTY_ADVANCED,
         }
         difficulty_name = difficulty_map.get(
-            target_difficulty, DIFFICULTY_GOOD_KNOWLEDGE # Default if somehow invalid (use constant)
+            target_difficulty,
+            DIFFICULTY_GOOD_KNOWLEDGE,  # Default if somehow invalid (use constant)
         )
 
         # Format search results for the prompt context
@@ -222,7 +226,9 @@ class TechTreeAI:
 
         prompt_input = {
             "topic": state.get("topic", "Unknown Topic"),
-            "knowledge_level": state.get("knowledge_level", DIFFICULTY_BEGINNER), # Use constant
+            "knowledge_level": state.get(
+                "knowledge_level", DIFFICULTY_BEGINNER
+            ),  # Use constant
             "target_difficulty": target_difficulty,
             "difficulty_name": difficulty_name,
             "questions_asked_str": json.dumps(state.get("questions_asked", [])),
@@ -241,7 +247,6 @@ class TechTreeAI:
             elif content.startswith("```"):
                 content = content.removeprefix("```").removesuffix("```").strip()
 
-
             question_data = json.loads(content)
 
             if not isinstance(question_data, dict) or not question_data.get("question"):
@@ -253,17 +258,33 @@ class TechTreeAI:
 
             # Update state
             new_questions = state.get("questions_asked", []) + [question_data]
+            # Ensure difficulty from LLM is treated as int
+            llm_difficulty = question_data.get(
+                "difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY
+            )
+            try:
+                current_difficulty_int = int(llm_difficulty)
+                # Validate range (0-3 based on constants)
+                if not (0 <= current_difficulty_int <= 3):
+                    logger.warning(
+                        f"LLM returned out-of-range difficulty '{llm_difficulty}', defaulting to {settings.ONBOARDING_DEFAULT_DIFFICULTY}."
+                    )
+                    current_difficulty_int = settings.ONBOARDING_DEFAULT_DIFFICULTY
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"LLM returned non-integer difficulty '{llm_difficulty}', defaulting to {settings.ONBOARDING_DEFAULT_DIFFICULTY}."
+                )
+                current_difficulty_int = settings.ONBOARDING_DEFAULT_DIFFICULTY
+
             new_difficulties = state.get("question_difficulties", []) + [
-                question_data.get("difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY)
+                current_difficulty_int
             ]
 
             return {
                 "questions_asked": new_questions,
                 "question_difficulties": new_difficulties,
                 "current_question": question_data["question"],
-                "current_question_difficulty": question_data.get(
-                    "difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY
-                ),
+                "current_question_difficulty": current_difficulty_int,  # Use the validated integer
                 "error_message": None,  # Clear previous errors
             }
         except json.JSONDecodeError as e:
@@ -293,10 +314,18 @@ class TechTreeAI:
         chain = prompt | self.llm
 
         # --- Manually Format Prompt to bypass potential template parsing issues ---
-        current_question_data = state.get("questions_asked", [])[-1] if state.get("questions_asked") else None
+        current_question_data = (
+            state.get("questions_asked", [])[-1]
+            if state.get("questions_asked")
+            else None
+        )
         if not current_question_data or not isinstance(current_question_data, dict):
-             logger.error("Cannot evaluate answer: No valid current question found in state.")
-             return {"error_message": "Internal error: Could not find the question to evaluate."}
+            logger.error(
+                "Cannot evaluate answer: No valid current question found in state."
+            )
+            return {
+                "error_message": "Internal error: Could not find the question to evaluate."
+            }
 
         search_results_list = state.get("google_results", [])
         search_context = "No search results available."
@@ -304,21 +333,23 @@ class TechTreeAI:
             search_context = "\n\n".join(map(str, search_results_list))
 
         topic = state.get("topic", "Unknown Topic")
-        current_question_str = current_question_data.get("question", "Error retrieving question")
+        current_question_str = current_question_data.get(
+            "question", "Error retrieving question"
+        )
 
         # Use a local copy of the imported prompt string to isolate formatting
-        prompt_string_copy = str(EVALUATE_ANSWER_PROMPT) # Create a copy
+        prompt_string_copy = str(EVALUATE_ANSWER_PROMPT)  # Create a copy
 
         formatted_human_prompt = prompt_string_copy.format(
             topic=topic,
             current_question=current_question_str,
             answer=answer,
-            search_context=search_context
+            search_context=search_context,
         )
-        # Create messages manually
+        # Create messages manually using message objects
         messages = [
-            ("system", ASSESSMENT_SYSTEM_PROMPT.format(topic=topic)), # Format system prompt too
-            ("human", formatted_human_prompt),
+            SystemMessage(content=ASSESSMENT_SYSTEM_PROMPT.format(topic=topic)),
+            HumanMessage(content=formatted_human_prompt),
         ]
 
         # Create a new chain instance with the manually created messages (or just invoke LLM directly)
@@ -328,7 +359,7 @@ class TechTreeAI:
 
         try:
             # Use call_with_retry with the manually formatted messages
-            response = await call_with_retry(self.llm, messages) # Use await and call_with_retry
+            response = await call_with_retry(self.llm, messages)
             content = str(response.content).strip()
             logger.debug("Raw answer evaluation response: %s", content)
 
@@ -359,46 +390,84 @@ class TechTreeAI:
                 evaluation_data["score"]
             ]
 
+            # --- DEBUG LOGGING: Before difficulty adjustment ---
+            logger.info(
+                f"[DEBUG] Evaluating answer: '{answer[:50]}...' | Score: {evaluation_data.get('score')} | "
+                f"Feedback: '{evaluation_data.get('feedback', '')[:50]}...'"
+            )
+            logger.info(
+                f"[DEBUG] State before adjustment: Target Difficulty={state.get('current_target_difficulty')}, "
+                f"Consecutive Wrong @ Difficulty={state.get('consecutive_wrong_at_current_difficulty')}"
+            )
+            # --- END DEBUG LOGGING ---
+
             # --- New Difficulty Adjustment Logic ---
             score = evaluation_data["score"]
             # Get current state values or defaults
-            target_difficulty = state.get("current_target_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY)
-            consecutive_wrong_at_difficulty = state.get("consecutive_wrong_at_current_difficulty", 0)
-            consecutive_hard_correct = state.get("consecutive_hard_correct_or_partial", 0)
-            min_difficulty = 1 # Assuming 1 is the easiest
-            max_difficulty = 5 # Assuming 5 is the hardest (adjust if needed)
+            target_difficulty = state.get(
+                "current_target_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY
+            )
+            consecutive_wrong_at_difficulty = state.get(
+                "consecutive_wrong_at_current_difficulty", 0
+            )
+            consecutive_hard_correct = state.get(
+                "consecutive_hard_correct_or_partial", 0
+            )
+            min_difficulty = 0  # Match constants.py (Beginner=0)
+            max_difficulty = 3  # Match constants.py (Advanced=3)
 
-            original_difficulty = target_difficulty # Store original for comparison
+            original_difficulty = target_difficulty  # Store original for comparison
 
-            if score < 0.5: # Incorrect answer
+            if score < 0.5:  # Incorrect answer
                 consecutive_wrong_at_difficulty += 1
-                consecutive_hard_correct = 0 # Reset correct counter
+                consecutive_hard_correct = 0  # Reset correct counter
 
-                if consecutive_wrong_at_difficulty >= 2 and target_difficulty > min_difficulty:
+                if (
+                    consecutive_wrong_at_difficulty >= 2
+                    and target_difficulty > min_difficulty
+                ):
                     target_difficulty -= 1
-                    logger.info(f"Difficulty decreased to {target_difficulty} due to 2 consecutive wrongs.")
-                    consecutive_wrong_at_difficulty = 0 # Reset counter after difficulty change
-            else: # Correct or partially correct answer
-                consecutive_wrong_at_difficulty = 0 # Reset wrong counter
+                    logger.info(
+                        f"Difficulty decreased to {target_difficulty} due to 2 consecutive wrongs."
+                    )
+                    consecutive_wrong_at_difficulty = (
+                        0  # Reset counter after difficulty change
+                    )
+            else:  # Correct or partially correct answer
+                consecutive_wrong_at_difficulty = 0  # Reset wrong counter
 
                 # Check for increasing difficulty (only if correct/partial)
                 if score > 0.8 and target_difficulty < max_difficulty:
                     target_difficulty += 1
-                    logger.info(f"Difficulty increased to {target_difficulty} due to high score.")
+                    logger.info(
+                        f"Difficulty increased to {target_difficulty} due to high score."
+                    )
                 # Check for consecutive hard correct (existing logic)
-                current_question_difficulty = state.get("current_question_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY)
+                current_question_difficulty = state.get(
+                    "current_question_difficulty",
+                    settings.ONBOARDING_DEFAULT_DIFFICULTY,
+                )
                 if (
-                    current_question_difficulty >= settings.ONBOARDING_HARD_DIFFICULTY_THRESHOLD
+                    current_question_difficulty
+                    >= settings.ONBOARDING_HARD_DIFFICULTY_THRESHOLD
                     and score >= 0.7
                 ):
                     consecutive_hard_correct += 1
                 else:
-                    consecutive_hard_correct = 0 # Reset if not hard or not mostly correct
+                    consecutive_hard_correct = (
+                        0  # Reset if not hard or not mostly correct
+                    )
 
             # Resetting the counter is handled within the if/else block above
             # when difficulty decreases or answer is correct.
             # Removing the general reset based on any difficulty change.
 
+            logger.info(
+                f"[DEBUG] Difficulty Adjustment: Score={score:.2f}, "
+                f"Original Difficulty={original_difficulty}, New Difficulty={target_difficulty}, "
+                f"Consecutive Wrong @ Difficulty={consecutive_wrong_at_difficulty}, "
+                f"Consecutive Hard Correct={consecutive_hard_correct}"
+            )
             return {
                 "answers": new_answers,
                 "answer_evaluations": new_evaluations,
@@ -427,16 +496,25 @@ class TechTreeAI:
             logger.info("Ending assessment due to error state.")
             return False
         # --- New Termination Logic ---
-        min_difficulty = 1 # Assuming 1 is the easiest level
-        consecutive_wrong_at_difficulty = state.get("consecutive_wrong_at_current_difficulty", 0)
-        current_difficulty = state.get("current_target_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY)
+        min_difficulty = 0  # Match constants.py (Beginner=0)
+        consecutive_wrong_at_difficulty = state.get(
+            "consecutive_wrong_at_current_difficulty", 0
+        )
+        current_difficulty = state.get(
+            "current_target_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY
+        )
 
         # Stop if 2 wrong at the easiest difficulty level
-        if consecutive_wrong_at_difficulty >= 2 and current_difficulty == min_difficulty:
-             logger.info(f"Ending assessment: {consecutive_wrong_at_difficulty} consecutive wrong answers at easiest difficulty ({min_difficulty}).")
-             # Optionally add a flag to state here if calculate_final_assessment needs it
-             # state['stopped_at_easiest'] = True
-             return False
+        if (
+            consecutive_wrong_at_difficulty >= 2
+            and current_difficulty == min_difficulty
+        ):
+            logger.info(
+                f"Ending assessment: {consecutive_wrong_at_difficulty} consecutive wrong answers at easiest difficulty ({min_difficulty})."
+            )
+            # Optionally add a flag to state here if calculate_final_assessment needs it
+            # state['stopped_at_easiest'] = True
+            return False
 
         # Keep other conditions
         if state.get("consecutive_hard_correct_or_partial", 0) >= 3:
@@ -461,23 +539,45 @@ class TechTreeAI:
         )
 
         # Determine final level
-        min_difficulty = 1 # Assuming 1 is the easiest level
-        consecutive_wrong_at_difficulty = state.get("consecutive_wrong_at_current_difficulty", 0)
-        current_difficulty = state.get("current_target_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY)
+        min_difficulty = 0  # Match constants.py (Beginner=0)
+        consecutive_wrong_at_difficulty = state.get(
+            "consecutive_wrong_at_current_difficulty", 0
+        )
+        current_difficulty = state.get(
+            "current_target_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY
+        )
 
         # Check if assessment stopped due to 2 wrong at easiest level
-        if consecutive_wrong_at_difficulty >= 2 and current_difficulty == min_difficulty:
-            final_level = DIFFICULTY_BEGINNER # Use constant
-            logger.info(f"Assigning '{DIFFICULTY_BEGINNER}' level due to stopping at easiest difficulty.")
+        if (
+            consecutive_wrong_at_difficulty >= 2
+            and current_difficulty == min_difficulty
+        ):
+            final_level = DIFFICULTY_BEGINNER  # Use constant
+            logger.info(
+                f"Assigning '{DIFFICULTY_BEGINNER}' level due to stopping at easiest difficulty."
+            )
         else:
             # Original score-based logic
             if score_percentage >= 75:
-                final_level = DIFFICULTY_ADVANCED # Use constant
+                final_level = DIFFICULTY_ADVANCED  # Use constant
             elif score_percentage >= 40:
-                final_level = DIFFICULTY_GOOD_KNOWLEDGE # Use constant
+                final_level = DIFFICULTY_GOOD_KNOWLEDGE  # Use constant
             else:
-                final_level = DIFFICULTY_BEGINNER # Use constant
+                final_level = DIFFICULTY_BEGINNER  # Use constant
 
+        # --- DEBUG LOGGING: Final Assessment Path ---
+        if (
+            consecutive_wrong_at_difficulty >= 2
+            and current_difficulty == min_difficulty
+        ):
+            logger.info(
+                "[DEBUG] Final level determined by: Early termination at easiest difficulty."
+            )
+        else:
+            logger.info(
+                f"[DEBUG] Final level determined by: Score percentage ({score_percentage:.2f}%)."
+            )
+        # --- END DEBUG LOGGING ---
         logger.info(
             f"Final Assessment - Level: {final_level}, Score: {score_percentage:.2f}%"
         )

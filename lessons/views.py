@@ -166,6 +166,20 @@ def lesson_detail(
         content_status: str = "NOT_FOUND"  # Default if no record
         if lesson_content:
             content_status = lesson_content.status  # Get status from the model field
+            
+            # If status is FAILED, trigger regeneration
+            if content_status == LessonContent.StatusChoices.FAILED:
+                logger.info(
+                    f"Found FAILED content for lesson {lesson.pk}. Triggering regeneration."
+                )
+                # Create a task to regenerate content in the background
+                # We'll use the async view's URL to trigger regeneration
+                regen_url = reverse('lessons:generate_content_async', args=[
+                    syllabus_id, module_index, lesson_index
+                ])
+                # Add a message to inform the user
+                messages.info(request, "Lesson content generation failed previously. Retrying...")
+                
             # Handle legacy cases where status might not be set yet
             if not content_status:
                 # If content exists but status is empty, assume it's completed (legacy)
@@ -174,6 +188,7 @@ def lesson_detail(
                     and isinstance(lesson_content.content, dict)
                     and "exposition" in lesson_content.content
                 ):
+                    
                     content_status = LessonContent.StatusChoices.COMPLETED
                     logger.info(
                         "Lesson content %s has no status, assuming COMPLETED (legacy).",
@@ -271,6 +286,16 @@ def lesson_detail(
             )
         # --- End Welcome Message ---
 
+        # If content status is FAILED, automatically trigger regeneration
+        trigger_regeneration = False
+        regeneration_url = None
+        if content_status == LessonContent.StatusChoices.FAILED:
+            trigger_regeneration = True
+            regeneration_url = reverse('lessons:generate_content_async', args=[
+                syllabus_id, module_index, lesson_index
+            ])
+            messages.info(request, "Lesson content generation failed previously. Automatically retrying...")
+        
         context = {
             "syllabus": syllabus,
             "module": module,
@@ -295,6 +320,9 @@ def lesson_detail(
                 "PENDING": LessonContent.StatusChoices.PENDING,
                 # NOT_FOUND is effectively handled by PENDING now
             },
+            # Add regeneration flags
+            "trigger_regeneration": trigger_regeneration,
+            "regeneration_url": regeneration_url,
         }
         return render(request, "lessons/lesson_detail.html", context)
 

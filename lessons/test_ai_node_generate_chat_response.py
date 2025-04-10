@@ -1,7 +1,7 @@
 """Tests for the generate_chat_response node function."""
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from typing import cast, Dict, Any, List
 
 from lessons.ai.nodes import generate_chat_response
@@ -36,10 +36,12 @@ def create_initial_lesson_state(user_message: str) -> LessonState:
 @patch('lessons.ai.nodes._get_llm')
 def test_generate_chat_response_success(mock_get_llm):
     """Test generating a standard chat response."""
-    mock_llm_instance = MagicMock()
+    mock_llm_instance = AsyncMock()
     mock_response_text = "This is the AI chat response."
     # Mock the response object structure expected by the node
-    mock_llm_instance.invoke.return_value = MagicMock(content=mock_response_text)
+    mock_response = AsyncMock()
+    mock_response.content = mock_response_text
+    mock_llm_instance.invoke = AsyncMock(return_value=mock_response)
     mock_get_llm.return_value = mock_llm_instance
 
     user_message = "Explain Python decorators."
@@ -67,7 +69,7 @@ def test_generate_chat_response_success(mock_get_llm):
 @patch('lessons.ai.nodes._get_llm')
 def test_generate_chat_response_llm_error(mock_get_llm):
     """Test chat response generation when LLM fails."""
-    mock_llm_instance = MagicMock()
+    mock_llm_instance = AsyncMock()
     mock_llm_instance.invoke.side_effect = Exception("LLM Chat Error")
     mock_get_llm.return_value = mock_llm_instance
 
@@ -105,7 +107,7 @@ def test_generate_chat_response_no_llm():
 @patch('lessons.ai.nodes._get_llm') # Mock LLM even though it shouldn't be called
 def test_generate_chat_response_no_user_message(mock_get_llm):
     """Test chat response when the last history item isn't from the user."""
-    mock_llm_instance = MagicMock()
+    mock_llm_instance = AsyncMock()
     mock_get_llm.return_value = mock_llm_instance
 
     initial_state = create_initial_lesson_state("This message shouldn't matter")

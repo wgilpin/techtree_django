@@ -3,6 +3,7 @@
 import json  # Import json module
 import logging
 import uuid
+from typing import Optional, cast, Dict, Any
 from typing import Optional, cast
 
 from asgiref.sync import sync_to_async
@@ -18,8 +19,11 @@ from django.shortcuts import (  # Add redirect, get_object_or_404
 )
 from django.urls import NoReverseMatch, reverse
 from django.views.decorators.http import require_GET, require_POST
+from django.conf import settings # Import settings
 
 # Import difficulty constants
+from core.constants import DIFFICULTY_BEGINNER, DIFFICULTY_VALUES, DIFFICULTY_LEVELS, DIFFICULTY_FROM_VALUE
+from core.constants import DIFFICULTY_BEGINNER, DIFFICULTY_VALUES, DIFFICULTY_LEVELS, DIFFICULTY_FROM_VALUE
 from core.constants import DIFFICULTY_BEGINNER
 from core.exceptions import ApplicationError
 
@@ -88,17 +92,22 @@ syllabus_service = SyllabusService()
 async def start_assessment_view(request: HttpRequest, topic: str) -> JsonResponse:
     """Start a new onboarding assessment for a given topic. (Async)"""
     logger.info(f"Async starting assessment view for topic: {topic}")
+    logger.debug("Before fetching async user")
     user = await request.auser()  # Use auser() for async user fetch
+    logger.debug("After fetching async user")
     user_id: Optional[int] = None
     if user.is_authenticated:
         user_id = user.pk
 
     try:
+        logger.debug("Before get_ai_instance and initialize_state")
         ai_instance = get_ai_instance()
         assessment_state = ai_instance.initialize_state(topic)
         assessment_state["user_id"] = user_id
+        logger.debug("After get_ai_instance and initialize_state, before perform_internet_search")
 
         search_results = await ai_instance.perform_internet_search(assessment_state)
+        logger.debug("After perform_internet_search, before generate_question")
         assessment_state["wikipedia_content"] = search_results.get(
             "wikipedia_content", ""
         )
@@ -108,6 +117,7 @@ async def start_assessment_view(request: HttpRequest, topic: str) -> JsonRespons
         )
 
         question_results = await ai_instance.generate_question(assessment_state)
+        logger.debug("After generate_question, before set_session_value")
         assessment_state["current_question"] = question_results.get(
             "current_question", "Error"
         )
@@ -124,18 +134,27 @@ async def start_assessment_view(request: HttpRequest, topic: str) -> JsonRespons
 
         # Save initial state to session asynchronously
         await set_session_value(request.session, "assessment_state", assessment_state)
+        logger.debug("After set_session_value, preparing response")
         logger.info(
             f"Assessment state initialized in session for user: {user_id}, topic: {topic}"
         )
 
         # The first question is always number 1
+        # Explicitly access and type hint the difficulty value
+        difficulty_value: int = assessment_state.get("current_question_difficulty", 0) # Default to 0 (Beginner)
+        # Look up the name using the integer value (DIFFICULTY_FROM_VALUE expects int)
+        difficulty_name = DIFFICULTY_FROM_VALUE.get(difficulty_value, DIFFICULTY_BEGINNER)
+        max_difficulty = len(DIFFICULTY_LEVELS) # Should be 4
+
         return JsonResponse(
             {
                 "search_status": assessment_state.get("search_completed", False),
                 "question": assessment_state.get("current_question"),
-                "difficulty": assessment_state.get("current_question_difficulty"),
+                "difficulty": difficulty_name, # The string name (e.g., "Good Knowledge")
+                "difficulty_value": difficulty_value, # The integer value (e.g., 2)
+                "max_difficulty": max_difficulty, # The total number of levels (e.g., 4)
                 "is_complete": False,
-                "question_number": 1,  # Add question number
+                "question_number": 1,
             }
         )
 
@@ -161,7 +180,10 @@ async def submit_answer_view(
         return JsonResponse({"error": "No active assessment found."}, status=400)
 
     try:
-        assessment_state: AgentState = cast(AgentState, assessment_state_data)
+        # Explicitly hint the raw session data first
+        raw_state_data: Dict[str, Any] = assessment_state_data
+        # Then cast to the specific TypedDict
+        assessment_state: AgentState = cast(AgentState, raw_state_data)
     except (TypeError, KeyError):
         logger.error("Session data does not match expected AgentState structure.")
         await del_session_key(
@@ -185,45 +207,78 @@ async def submit_answer_view(
     # Parse JSON body instead of POST form data
     try:
         data = json.loads(request.body)
-        answer = data.get("answer")
-        if not answer:
+        answer = data.get("answer") # Might be None if skipping
+        is_skip = data.get("skip", False) is True
+
+        if not answer and not is_skip:
             return JsonResponse(
-                {"error": "Missing answer in JSON payload."}, status=400
+                {"error": "Missing 'answer' or 'skip' flag in JSON payload."}, status=400
             )
     except json.JSONDecodeError:
         logger.warning("Received invalid JSON in submit_answer request.")
         return JsonResponse({"error": "Invalid JSON format."}, status=400)
 
-    logger.info(f"Received answer: {answer[:100]}...")
+    if is_skip:
+        logger.info("Received skip request.")
+    else:
+        logger.info(f"Received answer: {answer[:100]}...")
 
     try:
         ai_instance = get_ai_instance()
 
-        # Pass a copy of the state to evaluate_answer to avoid in-place modification issues
-        eval_results = await ai_instance.evaluate_answer(
-            assessment_state.copy(), answer
-        )
-        assessment_state["answers"] = eval_results.get(
-            "answers", assessment_state["answers"]
-        )
-        assessment_state["answer_evaluations"] = eval_results.get(
-            "answer_evaluations", assessment_state["answer_evaluations"]
-        )
-        # Update state with results from evaluate_answer (using new/updated keys)
-        assessment_state["consecutive_wrong_at_current_difficulty"] = eval_results.get(
-            "consecutive_wrong_at_current_difficulty",
-            assessment_state.get("consecutive_wrong_at_current_difficulty", 0),
-        )
-        assessment_state["current_target_difficulty"] = eval_results.get(
-            "current_target_difficulty",
-            assessment_state.get("current_target_difficulty", DIFFICULTY_BEGINNER),
-        )
-        # Note: consecutive_hard_correct_or_partial is also updated in eval_results now
-        assessment_state["consecutive_hard_correct_or_partial"] = eval_results.get(
-            "consecutive_hard_correct_or_partial",
-            assessment_state["consecutive_hard_correct_or_partial"],
-        )
-        assessment_state["feedback"] = eval_results.get("feedback")
+        if is_skip:
+            # --- Handle Skip Manually ---
+            logger.info("Processing skip manually, simulating incorrect answer.")
+            # Append placeholder answer string and score 0.0
+            # NOTE: Appending string to match AgentState type hint List[str].
+            assessment_state["answers"] = assessment_state.get("answers", []) + ["[SKIPPED]"]
+            assessment_state["answer_evaluations"] = assessment_state.get("answer_evaluations", []) + [0.0]
+            assessment_state["feedback"] = "Question skipped."
+
+            # Replicate difficulty adjustment logic for score 0.0
+            target_difficulty = assessment_state.get("current_target_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY)
+            consecutive_wrong_at_difficulty = assessment_state.get("consecutive_wrong_at_current_difficulty", 0) + 1 # Increment wrong count
+            consecutive_hard_correct = 0 # Reset correct counter
+
+            min_difficulty = 0 # Beginner
+
+            if consecutive_wrong_at_difficulty >= 2 and target_difficulty > min_difficulty:
+                target_difficulty -= 1
+                logger.info(f"Difficulty decreased to {target_difficulty} due to 2 consecutive wrongs (including skip).")
+                consecutive_wrong_at_difficulty = 0 # Reset counter after difficulty change
+
+            # Update state with calculated values
+            assessment_state["consecutive_wrong_at_current_difficulty"] = consecutive_wrong_at_difficulty
+            assessment_state["consecutive_hard_correct_or_partial"] = consecutive_hard_correct
+            assessment_state["current_target_difficulty"] = target_difficulty
+            # --- End Skip Handling ---
+        else:
+            # --- Handle Normal Answer Submission ---
+            # Pass a copy of the state to evaluate_answer to avoid in-place modification issues
+            eval_results = await ai_instance.evaluate_answer(
+                assessment_state.copy(), answer
+            )
+            # Update state based on LLM evaluation results
+            assessment_state["answers"] = eval_results.get(
+                "answers", assessment_state.get("answers", [])
+            )
+            assessment_state["answer_evaluations"] = eval_results.get(
+                "answer_evaluations", assessment_state.get("answer_evaluations", [])
+            )
+            assessment_state["consecutive_wrong_at_current_difficulty"] = eval_results.get(
+                "consecutive_wrong_at_current_difficulty",
+                assessment_state.get("consecutive_wrong_at_current_difficulty", 0),
+            )
+            assessment_state["current_target_difficulty"] = eval_results.get(
+                "current_target_difficulty",
+                assessment_state.get("current_target_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY),
+            )
+            assessment_state["consecutive_hard_correct_or_partial"] = eval_results.get(
+                "consecutive_hard_correct_or_partial",
+                assessment_state.get("consecutive_hard_correct_or_partial", 0),
+            )
+            assessment_state["feedback"] = eval_results.get("feedback")
+            # --- End Normal Answer Handling ---
 
         # Pass a copy to should_continue to check the state *after* evaluation updates
         should_continue = ai_instance.should_continue(assessment_state.copy())
@@ -257,13 +312,22 @@ async def submit_answer_view(
             )
 
             # Calculate the number for the *next* question being sent
-            question_number = len(assessment_state.get("questions_asked", []))
+            # Explicitly access and type hint the list
+            questions_asked_list: list = assessment_state.get("questions_asked", [])
+            question_number = len(questions_asked_list)
+            # Explicitly access and type hint the difficulty value
+            difficulty_value: int = assessment_state.get("current_question_difficulty", 0) # Default to 0 (Beginner)
+            # Look up the name using the integer value (DIFFICULTY_FROM_VALUE expects int)
+            difficulty_name = DIFFICULTY_FROM_VALUE.get(difficulty_value, DIFFICULTY_BEGINNER)
+            max_difficulty = len(DIFFICULTY_LEVELS) # Should be 4
+
             response_data = {
                 "is_complete": False,
                 "question": assessment_state.get("current_question"),
-                "difficulty": assessment_state.get("current_question_difficulty"),
-                "question_number": question_number,  # Add question number
-                # Explicitly handle None feedback
+                "difficulty": difficulty_name, # The string name (e.g., "Good Knowledge")
+                "difficulty_value": difficulty_value, # The integer value (e.g., 2)
+                "max_difficulty": max_difficulty, # The total number of levels (e.g., 4)
+                "question_number": question_number,
                 "feedback": assessment_state.get("feedback") or "",
             }
             return JsonResponse(response_data)

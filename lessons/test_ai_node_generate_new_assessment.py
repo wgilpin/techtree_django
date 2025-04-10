@@ -1,7 +1,7 @@
 """Tests for the generate_new_assessment node function."""
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from typing import cast, Dict, Any, List
 import json
 
@@ -37,7 +37,7 @@ def create_initial_lesson_state(user_message: str) -> LessonState:
 @patch('lessons.ai.nodes._get_llm')
 def test_generate_new_assessment_success(mock_get_llm):
     """Test generating a new assessment successfully."""
-    mock_llm_instance = MagicMock()
+    mock_llm_instance = AsyncMock()
     mock_assessment_data = {
         "id": "as1",
         "type": "multiple_choice",
@@ -46,7 +46,9 @@ def test_generate_new_assessment_success(mock_get_llm):
         "correct_answer_id": "b",
         "explanation": "'for' loops are ideal for known iteration counts."
     }
-    mock_llm_instance.invoke.return_value = MagicMock(content=json.dumps(mock_assessment_data))
+    mock_response = AsyncMock()
+    mock_response.content = json.dumps(mock_assessment_data)
+    mock_llm_instance.invoke = AsyncMock(return_value=mock_response)
     mock_get_llm.return_value = mock_llm_instance
 
     initial_state = create_initial_lesson_state("Quiz me")
@@ -69,7 +71,7 @@ def test_generate_new_assessment_success(mock_get_llm):
 @patch('lessons.ai.nodes._get_llm')
 def test_generate_new_assessment_llm_error(mock_get_llm):
     """Test assessment generation when LLM fails."""
-    mock_llm_instance = MagicMock()
+    mock_llm_instance = AsyncMock()
     mock_llm_instance.invoke.side_effect = Exception("LLM Assessment Error")
     mock_get_llm.return_value = mock_llm_instance
 
@@ -88,8 +90,10 @@ def test_generate_new_assessment_llm_error(mock_get_llm):
 @patch('lessons.ai.nodes._get_llm')
 def test_generate_new_assessment_invalid_json(mock_get_llm):
     """Test assessment generation when LLM returns invalid JSON."""
-    mock_llm_instance = MagicMock()
-    mock_llm_instance.invoke.return_value = MagicMock(content='invalid json')
+    mock_llm_instance = AsyncMock()
+    mock_response_invalid = AsyncMock()
+    mock_response_invalid.content = 'invalid json'
+    mock_llm_instance.invoke = AsyncMock(return_value=mock_response_invalid)
     mock_get_llm.return_value = mock_llm_instance
 
     initial_state = create_initial_lesson_state("Quiz me")

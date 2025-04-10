@@ -1,0 +1,3 @@
+[ ] don't show the question box while eaiting for the question to be written
+[ ] improve syllabus prompt - less childlike, explain what the level mean
+[ ] use same loading page every where - the greyed out full screen one like...

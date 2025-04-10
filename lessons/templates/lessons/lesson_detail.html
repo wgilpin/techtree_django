@@ -49,15 +49,59 @@
                 {% if exposition_content is not None %}
                     {{ exposition_content|markdownify }} {# Render existing content #}
                 {% else %}
-                    <div id="loading-message">
-                        {# Static text and spinner centered by existing #loading-message styles #}
-                        <h1 class="display-4 mb-3">Loading...</h1> {# Larger heading, added margin-bottom #}
-                        <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;"> {# Made spinner larger #}
-                            {# Removed visually-hidden span as text is now in h1 #}
+                    {% if content_status == LessonContentStatus.FAILED %}
+                        <div id="error-message">
+                            <h1 class="display-4 mb-3">Regenerating Content...</h1>
+                            <p>Previous generation failed. Automatically retrying...</p>
+                            <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                            </div>
                         </div>
-                    </div>
+                    {% elif content_status == LessonContentStatus.GENERATING %}
+                        <div id="loading-message">
+                            <h1 class="display-4 mb-3">Generating Content...</h1>
+                            <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                            </div>
+                        </div>
+                    {% else %}
+                        <div id="loading-message">
+                            <h1 class="display-4 mb-3">Loading...</h1>
+                            <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                            </div>
+                        </div>
+                    {% endif %}
                 {% endif %}
             </div>
+
+            {% if trigger_regeneration %}
+            <script>
+                // Automatically trigger content regeneration for failed content
+                document.addEventListener('DOMContentLoaded', function() {
+                    console.log("Triggering automatic regeneration for failed content");
+                    fetch("{{ regeneration_url }}", {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRFToken': '{{ csrf_token }}',
+                            'Content-Type': 'application/json'
+                        },
+                        credentials: 'same-origin'
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Network response was not ok');
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        console.log("Regeneration triggered successfully");
+                        // Start polling for content status
+                        startPolling();
+                    })
+                    .catch(error => {
+                        console.error("Error triggering regeneration:", error);
+                    });
+                });
+            </script>
+            {% endif %}
 
             <div id="chat-section-container" {% if exposition_content is None %}style="display: none;"{% endif %}>
                 <h2>Interactive Chat / Exercises</h2>
