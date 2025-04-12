@@ -10,11 +10,15 @@ This folder implements the onboarding assessment logic, user-facing views, and s
 ## Files
 
 ### admin.py
+
 Minimal admin configuration for the onboarding app; no models are registered here.
+
 - No public methods.
 
 ### ai.py
+
 Encapsulates the AI logic for the onboarding assessment, including state management, question generation, answer evaluation, and final assessment calculation.
+
 - `AgentState`: TypedDict representing the state for onboarding assessment.
 - `_get_llm(model_key="FAST_MODEL", temperature=0.2)`: Gets the LLM instance based on settings.
 - `TechTreeAI`
@@ -27,22 +31,30 @@ Encapsulates the AI logic for the onboarding assessment, including state managem
   - `calculate_final_assessment(state)`: Calculates the final assessment results.
 
 ### logic.py
+
 Implements the business logic for onboarding assessment, including question flow, answer handling, and difficulty adjustment.
+
 - `get_ai_instance()`: Instantiates the AI logic class.
 - `generate_next_question(assessment_state, ai_instance, settings)`: Generates the next question and updates assessment state.
 - `handle_normal_answer(assessment_state, ai_instance, answer, settings)`: Updates assessment state for a normal answer submission.
 - `handle_skip_answer(assessment_state, settings)`: Updates assessment state for a skipped answer.
 
 ### prompts.py
+
 Defines prompt templates for the onboarding AI graph, including assessment, question generation, answer evaluation, and search query prompts.
+
 - No public methods.
 
 ### urls.py
+
 URL configuration for the onboarding app, mapping URL patterns to assessment, answer submission, syllabus initiation, and polling views.
+
 - No public methods.
 
 ### views.py
+
 Implements the main views for the onboarding app, including assessment start, answer submission, skipping, syllabus initiation, and polling.
+
 - `get_session_value(session, key, default=None)`: Asynchronously gets a value from the session.
 - `set_session_value(session, key, value)`: Asynchronously sets a value in the session.
 - `del_session_key(session, key)`: Asynchronously deletes a key from the session.

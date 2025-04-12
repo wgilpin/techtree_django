@@ -2,6 +2,8 @@
 
 This document provides a high-level overview of the different components of the TechTree Django application, summarizing the responsibilities of each major folder containing Python code.
 
+A more detailed `design.md` is found in each subfolder with python code.
+
 ---
 
 ## core

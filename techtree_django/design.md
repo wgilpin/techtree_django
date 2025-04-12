@@ -10,9 +10,13 @@ This folder contains the main configuration files for the Django project, includ
 ## Files
 
 ### settings.py
+
 Main Django settings file, configuring database, installed apps, middleware, templates, static files, logging, API keys, and custom application settings.
+
 - No public methods.
 
 ### urls.py
+
 Root URL configuration for the entire Django project, including URLs from the admin site, authentication, and individual application URL configurations.
+
 - No public methods.

@@ -10,11 +10,15 @@ This folder implements the AI-driven logic for syllabus generation, including th
 ## Files
 
 ### config.py
+
 Handles configuration for external APIs (Gemini, Tavily) used in syllabus generation, loading keys from Django settings.
+
 - No public methods.
 
 ### nodes.py
+
 Implements the node functions for the syllabus generation LangGraph, handling state initialization, database search, internet search, LLM generation/update, validation, and saving.
+
 - `initialize_state(_, topic, knowledge_level, user_id)`: Initializes the graph state with topic, knowledge level, and user ID.
 - `search_database(state)`: Searches the database for an existing syllabus matching the criteria using Django ORM.
 - `search_internet(state, tavily_client)`: Performs a web search using Tavily to gather context.
@@ -30,7 +34,9 @@ Implements the node functions for the syllabus generation LangGraph, handling st
 - `end_node(state)`: Terminal node for the graph, returns the state unchanged.
 
 ### nodes_old.py
+
 (Legacy) Implements older versions of node functions for the syllabus generation LangGraph.
+
 - `initialize_state(_, topic, knowledge_level, user_id)`: Initializes the graph state.
 - `search_database(state, db_service)`: Searches the database for an existing syllabus.
 - `search_internet(state, tavily_client)`: Performs a web search using Tavily.
@@ -42,15 +48,21 @@ Implements the node functions for the syllabus generation LangGraph, handling st
 - `end_node(_)`: Terminal node for the graph.
 
 ### prompts.py
+
 Defines prompt templates for syllabus generation and updates.
+
 - No public methods.
 
 ### state.py
+
 Defines the state dictionary structure (TypedDict) for the syllabus generation graph.
+
 - No public methods.
 
 ### syllabus_graph.py
+
 Defines and manages the LangGraph workflow for syllabus generation, orchestrating node execution.
+
 - `SyllabusAI`
   - `__init__()`: Initializes the SyllabusAI graph and stores dependencies.
   - `_create_workflow()`: Defines the structure (nodes and edges) of the syllabus LangGraph workflow.
@@ -65,5 +77,7 @@ Defines and manages the LangGraph workflow for syllabus generation, orchestratin
   - `delete_syllabus()`: Deletes the syllabus corresponding to the current state from the database.
 
 ### utils.py
+
 Provides utility functions, including a retry mechanism for function calls.
+
 - `call_with_retry(func, *args, max_retries, initial_delay, **kwargs)`: Calls a function with exponential backoff retry logic.
