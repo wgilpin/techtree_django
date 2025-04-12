@@ -22,7 +22,7 @@
 
         <div class="modules-container">
             {# Access modules directly from syllabus dictionary #}
-            {% for module in syllabus.modules %}
+            {% for module in modules %}
                 {# module_index is available as module.module_index from the view context #}
                 <div class="module-card">
                     <!-- Debug: Module ID: {{ module.id }}, Title: {{ module.title }}, Index: {{ module.module_index }} -->

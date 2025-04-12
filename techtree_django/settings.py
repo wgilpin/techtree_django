@@ -209,12 +209,17 @@ LOGGING = {
             'level': 'ERROR',      # Set the desired level here
             'propagate': False,
         },
+        'background_task.management.commands.process_tasks': {
+            'handlers': ['console', 'file'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
     },
 }
 
 
 # Onboarding Assessment Settings
-ONBOARDING_DEFAULT_DIFFICULTY = 3 # Example: Scale 1-5
+ONBOARDING_DEFAULT_DIFFICULTY = 2 # Example: Scale 1-5
 ONBOARDING_HARD_DIFFICULTY_THRESHOLD = 3 # Match constants.py (Advanced=3)
 ASSESSMENT_STATE_KEY = 'assessment_state' # Session key
 

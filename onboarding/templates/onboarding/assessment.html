@@ -88,6 +88,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
 
     let currentTopic = "{{ topic|default:''|escapejs }}"; // Get topic from Django context
+    let latestAssessmentState = null; // Store the latest assessment state
 
     function displayError(message) {
         errorText.textContent = `Error: ${message}`;
@@ -102,30 +103,45 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function updateAssessmentUI(data) {
         hideError();
+        // Store the latest assessment state for the next submission
+        if (data.assessment_state) {
+            latestAssessmentState = data.assessment_state; // Keep storing state
+        }
+
         if (data.is_complete) {
-            questionCounter.style.display = 'none'; // Hide counter on completion
-            // --- MODIFIED: Check for generating_url and redirect ---
-            if (data.generating_url) {
-                console.log(`Assessment complete. Redirecting to generating page: ${data.generating_url}`);
-                window.location.href = data.generating_url; // Redirect to the loading page
-                return; // Stop further UI updates as we are redirecting
-            } else {
-                // Fallback: Show completion message if no generating_url (e.g., error before generation started)
-                console.log("Assessment complete, but could not start syllabus generation. Showing results area.");
-                assessmentArea.style.display = 'none';
-                resultTopic.textContent = currentTopic;
-                resultLevel.textContent = data.knowledge_level || 'N/A';
-                resultScore.textContent = data.score !== undefined ? parseFloat(data.score).toFixed(1) : 'N/A';
-                resultArea.style.display = 'block';
-                if (data.feedback) { // Show feedback even on fallback completion screen
-                    feedbackText.textContent = data.feedback;
-                    feedbackArea.style.display = 'block';
-                }
+            console.log("Assessment complete. Preparing to generate syllabus.");
+            assessmentArea.style.display = 'none'; // Hide questions/answers
+            questionCounter.style.display = 'none'; // Hide counter
+            feedbackArea.style.display = 'none'; // Hide last feedback
+            resultArea.style.display = 'block'; // Show result area for message
+            resultArea.innerHTML = `<h2>Assessment Complete!</h2><p>Generating your personalized syllabus...</p><div class="spinner"></div>`; // Display generating message
+
+            // Extract topic and level from the final assessment state
+            const finalState = data.assessment_state;
+            if (!finalState) {
+                displayError("Could not retrieve final assessment state to generate syllabus.");
+                resultArea.innerHTML = `<h2>Assessment Complete!</h2><p style="color: var(--error-color);">Error: Could not retrieve final assessment details.</p>`;
+                return;
             }
+            const topic = finalState.topic;
+            const level = finalState.knowledge_level;
+
+            if (!topic || !level) {
+                 displayError("Missing topic or knowledge level in final assessment state.");
+                 resultArea.innerHTML = `<h2>Assessment Complete!</h2><p style="color: var(--error-color);">Error: Missing final assessment details (topic or level).</p>`;
+                 return;
+            }
+
+            console.log(`Final Topic: ${topic}, Final Level: ${level}`);
+            // Call the new function to initiate syllabus generation via backend
+            initiateSyllabusGeneration(topic, level);
+
         } else {
+            // --- UI Update for next question (existing logic) ---
             // Update question counter
             if (data.question_number) {
-                questionCounter.textContent = `Question ${data.question_number} of 10`;
+                const maxQuestions = data.max_questions || 10;
+                questionCounter.textContent = `Question ${data.question_number} of ${maxQuestions}`;
                 questionCounter.style.display = 'block';
             } else {
                 questionCounter.style.display = 'none'; // Hide if number not available
@@ -148,13 +164,114 @@ document.addEventListener('DOMContentLoaded', function() {
             } else {
                 feedbackArea.style.display = 'none';
             }
-            assessmentArea.style.display = 'block';
-            resultArea.style.display = 'none';
+            assessmentArea.style.display = 'block'; // Show assessment area
+            resultArea.style.display = 'none'; // Hide result area
             userAnswerInput.focus();
+            submitButton.disabled = false;
+            submitButton.innerHTML = 'Submit Answer'; // Reset button text and remove spinner
         }
-        submitButton.disabled = false;
-        submitButton.innerHTML = 'Submit Answer'; // Reset button text and remove spinner
     }
+    // Function to poll for task result
+    async function pollTaskResult(waitUrl) {
+        const maxAttempts = 30; // Maximum number of polling attempts
+        const pollInterval = 2000; // Poll every 2 seconds
+        
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            try {
+                console.log(`Polling attempt ${attempt + 1}/${maxAttempts}`);
+                
+                const response = await fetch(waitUrl, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json',
+                    },
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                console.log("Poll response:", data);
+                
+                if (data.status === "COMPLETED" || data.status === "completed") {
+                    // Task completed successfully
+                    console.log("Task completed successfully");
+                    updateAssessmentUI(data.result);
+                    return data.result;
+                } else if (data.status === "FAILED" || data.status === "failed") {
+                    // Task failed
+                    throw new Error(data.error || "Task processing failed");
+                } else if (data.status === "PROCESSING" || data.status === "processing" ||
+                           data.status === "PENDING" || data.status === "pending") {
+                    // Task still processing, wait and try again
+                    console.log(`Task still ${data.status.toLowerCase()}, waiting...`);
+                    await new Promise(resolve => setTimeout(resolve, pollInterval));
+                    continue;
+                } else {
+                    // Unknown status
+                    throw new Error(`Unknown task status: ${data.status}`);
+                }
+            } catch (error) {
+                console.error(`Error polling task status (attempt ${attempt + 1}/${maxAttempts}):`, error);
+                // Wait before retrying
+                await new Promise(resolve => setTimeout(resolve, pollInterval));
+            }
+        }
+        
+        // If we've reached here, we've exceeded the maximum number of attempts
+        throw new Error("Timed out waiting for task to complete");
+    }
+
+    // Function to initiate syllabus generation
+    async function initiateSyllabusGeneration(topic, level) {
+        // TODO: Replace with the actual URL name once created in urls.py
+        const initiateUrl = "{% url 'onboarding:initiate_syllabus' %}"; // Placeholder URL name
+        console.log(`Initiating syllabus generation for topic: ${topic}, level: ${level} at URL: ${initiateUrl}`);
+
+        try {
+            const response = await fetch(initiateUrl, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrfToken,
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ topic: topic, level: level }),
+            });
+
+            if (!response.ok) {
+                 let errorMsg = `HTTP error! status: ${response.status}`;
+                 try {
+                     const errorData = await response.json();
+                     errorMsg = errorData.error || errorMsg;
+                 } catch(e) { /* Ignore if response is not JSON */ }
+                throw new Error(errorMsg);
+            }
+
+            const data = await response.json();
+            console.log("Initiate syllabus response:", data);
+
+            if (data.error) {
+                throw new Error(data.error);
+            }
+
+            // Expecting a redirect URL to the 'generating_syllabus' page
+            if (data.redirect_url) {
+                console.log(`Syllabus generation initiated. Redirecting to: ${data.redirect_url}`);
+                window.location.href = data.redirect_url;
+            } else {
+                throw new Error("Syllabus initiation response did not include a redirect URL.");
+            }
+
+        } catch (error) {
+            console.error('Error initiating syllabus generation:', error);
+            // Display error within the result area
+            resultArea.innerHTML = `<h2>Assessment Complete!</h2><p style="color: var(--error-color);">Error initiating syllabus generation: ${error.message}</p><a href="{% url 'dashboard' %}" class="primary-button" style="margin-top: 1rem;">Back to Dashboard</a>`;
+            displayError(error.message || 'Could not initiate syllabus generation.'); // Also show in main error area if needed
+        }
+    }
+
 
     async function startAssessment() {
         if (!startUrl) {
@@ -214,8 +331,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
         try {
             // Prepare data as a JSON object
-            const payload = { answer: answer };
+            const payload = { answer: answer, assessment_state: latestAssessmentState };
 
+            // Optionally log the payload for debugging
+            // console.log("Submitting payload:", payload);
             const response = await fetch(submitUrl, {
                 method: 'POST',
                 headers: {
@@ -242,7 +361,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 throw new Error(data.error);
             }
 
-            updateAssessmentUI(data);
+            // Check if the response indicates a background task is processing
+            if (data.status === "processing" && data.wait_url) {
+                console.log(`Answer submitted, polling for result at: ${data.wait_url}`);
+                submitButton.innerHTML = '<span class="spinner"></span> Processing';
+                
+                // Poll for the task result
+                await pollTaskResult(data.wait_url);
+            } else {
+                // Handle immediate response (legacy mode)
+                updateAssessmentUI(data);
+            }
 
         } catch (error) {
             console.error('Error submitting answer:', error);
@@ -268,7 +397,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         try {
             // Prepare data with a skip flag
-            const payload = { skip: true };
+            const payload = { skip: true, assessment_state: latestAssessmentState };
 
             const response = await fetch(submitUrl, {
                 method: 'POST',
@@ -296,7 +425,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 throw new Error(responseData.error);
             }
 
-            updateAssessmentUI(responseData);
+            // Check if the response indicates a background task is processing
+            if (responseData.status === "processing" && responseData.wait_url) {
+                console.log(`Question skipped, polling for result at: ${responseData.wait_url}`);
+                submitButton.innerHTML = '<span class="spinner"></span> Processing';
+                
+                // Poll for the task result
+                responseData = await pollTaskResult(responseData.wait_url);
+            } else {
+                // Handle immediate response (legacy mode)
+                updateAssessmentUI(responseData);
+            }
 
         } catch (error) {
             console.error('Error skipping question:', error);

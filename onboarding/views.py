@@ -19,6 +19,7 @@ from django.shortcuts import (  # Add redirect, get_object_or_404
 from django.urls import NoReverseMatch, reverse
 from django.views.decorators.http import require_GET, require_POST
 from django.conf import settings # Import settings
+from django.db import transaction # Import transaction
 
 # Import difficulty constants
 from core.constants import DIFFICULTY_BEGINNER, DIFFICULTY_LEVELS, DIFFICULTY_FROM_VALUE
@@ -71,12 +72,7 @@ def create_user_assessment(**kwargs):
 
 
 # --- Helper to get/initialize AI instance ---
-def get_ai_instance() -> TechTreeAI:
-    """Instantiates the AI logic class."""
-    # Instantiate services (consider dependency injection later)
-    # Assuming TechTreeAI is the assessment AI
-    # TODO: Review if these should be instantiated per request or globally
-    return TechTreeAI()
+from .logic import get_ai_instance, handle_normal_answer, handle_skip_answer, generate_next_question
 
 
 syllabus_service = SyllabusService()
@@ -181,6 +177,14 @@ def submit_answer_view(
             del request.session["assessment_state"]
         return JsonResponse({"error": "Invalid assessment state found. Please restart."}, status=400)
 
+    # If assessment_state is provided in the request body, use it instead
+    try:
+        data = json.loads(request.body)
+        if "assessment_state" in data and data["assessment_state"]:
+            assessment_state = data["assessment_state"]
+    except Exception:
+        pass
+
     if assessment_state.get("is_complete", False):
         return JsonResponse({
             "is_complete": True,
@@ -208,7 +212,7 @@ def submit_answer_view(
 
     # Enqueue background task for answer evaluation and next question generation
     task = AITask.objects.create(
-        task_type=AITask.TaskType.LESSON_INTERACTION,
+        task_type=AITask.TaskType.ONBOARDING_ASSESSMENT,
         input_data={
             "assessment_state": assessment_state,
             "user_id": str(request.user.id) if request.user.is_authenticated else None,
@@ -223,7 +227,7 @@ def submit_answer_view(
     return JsonResponse({
         "status": "processing",
         "task_id": str(task.task_id),
-        "wait_url": "/api/tasks/status/?task_id=" + str(task.task_id),
+        "wait_url": f"/api/tasks/status/{task.task_id}/",
         "message": "Processing your answer and generating next question.",
     })
 
@@ -236,72 +240,8 @@ def dict_to_agent_state(d: dict) -> AgentState:
 
 from typing import Awaitable
 
-def generate_next_question(assessment_state: dict, ai_instance, settings) -> dict:
-    """Generate the next question and update assessment state."""
-    question_results = ai_instance.generate_question(assessment_state.copy())
-
-    assessment_state["current_question"] = question_results.get("current_question", "Error")
-    assessment_state["current_question_difficulty"] = question_results.get(
-        "current_question_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY
-    )
-    assessment_state["questions_asked"] = question_results.get(
-        "questions_asked", assessment_state.get("questions_asked", [])
-    )
-    assessment_state["question_difficulties"] = question_results.get(
-        "question_difficulties", assessment_state.get("question_difficulties", [])
-    )
-    if "step" in question_results:
-        assessment_state["step"] = question_results["step"]
-
-    return assessment_state
-
-
-
-
-def handle_normal_answer(assessment_state: dict, ai_instance, answer: str, settings) -> dict:
-    """
-    Update assessment state for a normal answer submission.
-    """
-    eval_results = ai_instance.evaluate_answer(assessment_state.copy(), answer)
-
-    assessment_state["answers"] = eval_results.get("answers", assessment_state.get("answers", []))
-    assessment_state["answer_evaluations"] = eval_results.get("answer_evaluations", assessment_state.get("answer_evaluations", []))
-    assessment_state["consecutive_wrong_at_current_difficulty"] = eval_results.get(
-        "consecutive_wrong_at_current_difficulty",
-        assessment_state.get("consecutive_wrong_at_current_difficulty", 0),
-    )
-    assessment_state["current_target_difficulty"] = eval_results.get(
-        "current_target_difficulty",
-        assessment_state.get("current_target_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY),
-    )
-    assessment_state["consecutive_hard_correct_or_partial"] = eval_results.get(
-        "consecutive_hard_correct_or_partial",
-        assessment_state.get("consecutive_hard_correct_or_partial", 0),
-    )
-    assessment_state["feedback"] = eval_results.get("feedback")
-
-    return assessment_state
-
-
-def handle_skip_answer(assessment_state: dict, settings) -> dict:
-    """Update assessment state for a skipped answer."""
-    target_difficulty = assessment_state.get("current_target_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY)
-    consecutive_wrong = assessment_state.get("consecutive_wrong_at_current_difficulty", 0) + 1
-    consecutive_hard_correct = 0
-    min_difficulty = 0
-
-    if consecutive_wrong >= 2 and target_difficulty > min_difficulty:
-        target_difficulty -= 1
-        consecutive_wrong = 0
-
-    assessment_state["answers"] = assessment_state.get("answers", []) + ["[SKIPPED]"]
-    assessment_state["answer_evaluations"] = assessment_state.get("answer_evaluations", []) + [0.0]
-    assessment_state["feedback"] = "Question skipped."
-    assessment_state["consecutive_wrong_at_current_difficulty"] = consecutive_wrong
-    assessment_state["consecutive_hard_correct_or_partial"] = consecutive_hard_correct
-    assessment_state["current_target_difficulty"] = target_difficulty
-
-    return assessment_state
+# Functions generate_next_question, handle_normal_answer, handle_skip_answer
+# are imported from .logic and should not be redefined here.
 
 
 def finalize_assessment_and_trigger_syllabus_task(request, user, assessment_state):
@@ -413,7 +353,112 @@ def skip_assessment_view(request: HttpRequest) -> HttpResponse:
         return redirect(dashboard_url)
 
 
-# --- Syllabus Generation Loading/Polling Views ---
+# --- Syllabus Initiation and Generation Views ---
+
+@login_required
+@require_POST
+def initiate_syllabus_view(request: HttpRequest) -> JsonResponse:
+    """
+    Initiates syllabus generation after assessment completion.
+
+    Checks for existing template syllabi, copies if found, otherwise
+    creates a pending syllabus and triggers a background task.
+    Returns a JSON response with a URL to redirect the user to.
+    """
+    user = cast(User, request.user)
+    try:
+        data = json.loads(request.body)
+        topic = data.get("topic")
+        level = data.get("level")
+
+        if not topic or not level:
+            logger.warning(f"Missing topic or level in initiate_syllabus request for user {user.pk}")
+            return JsonResponse({"error": "Missing 'topic' or 'level' in request."}, status=400)
+
+        logger.info(f"Initiating syllabus for user {user.pk}, topic='{topic}', level='{level}'")
+
+        # Clear assessment state from session if it exists
+        if "assessment_state" in request.session:
+            del request.session["assessment_state"]
+            logger.debug(f"Cleared assessment_state from session for user {user.pk}")
+
+        redirect_url = None
+        with transaction.atomic():
+            # 1. Check if user already has an active syllabus for this topic/level
+            existing_user_syllabus = Syllabus.objects.filter(
+                user=user,
+                topic=topic,
+                level=level,
+                status__in=[Syllabus.StatusChoices.PENDING, Syllabus.StatusChoices.GENERATING, Syllabus.StatusChoices.COMPLETED]
+            ).first()
+
+            if existing_user_syllabus:
+                logger.info(f"User {user.pk} already has syllabus {existing_user_syllabus.syllabus_id} for topic='{topic}', level='{level}'. Status: {existing_user_syllabus.status}")
+                if existing_user_syllabus.status == Syllabus.StatusChoices.COMPLETED:
+                    redirect_url = reverse("syllabus:detail", args=[existing_user_syllabus.pk])
+                else: # Pending or Processing
+                    redirect_url = reverse("onboarding:generating_syllabus", kwargs={"syllabus_id": existing_user_syllabus.syllabus_id})
+                return JsonResponse({"redirect_url": redirect_url})
+
+            # 2. Check for a template syllabus (user=None) for this topic/level
+            template_syllabus = Syllabus.objects.filter(
+                user=None,
+                topic=topic,
+                level=level,
+                status=Syllabus.StatusChoices.COMPLETED # Only copy completed templates
+            ).first()
+
+            if template_syllabus:
+                # 3a. Copy template syllabus
+                logger.info(f"Found template syllabus {template_syllabus.syllabus_id} for topic='{topic}', level='{level}'. Copying for user {user.pk}.")
+                new_syllabus = Syllabus.objects.create(
+                    user=user,
+                    topic=template_syllabus.topic,
+                    level=template_syllabus.level,
+                    user_entered_topic=template_syllabus.user_entered_topic,
+                    status=Syllabus.StatusChoices.COMPLETED # Mark as completed immediately
+                )
+                logger.info(f"Created syllabus {new_syllabus.syllabus_id} for user {user.pk} by copying template.")
+                redirect_url = reverse("syllabus:detail", args=[new_syllabus.pk])
+
+            else:
+                # 3b. Create new pending syllabus and trigger generation task
+                logger.info(f"No template syllabus found for topic='{topic}', level='{level}'. Creating new pending syllabus for user {user.pk}.")
+                new_syllabus = Syllabus.objects.create(
+                    user=user,
+                    topic=topic,
+                    level=level,
+                    status=Syllabus.StatusChoices.PENDING
+                )
+                logger.info(f"Created pending syllabus {new_syllabus.syllabus_id} for user {user.pk}.")
+
+                # Create and enqueue the background task
+                task = AITask.objects.create(
+                    user=user,
+                    task_type=AITask.TaskType.SYLLABUS_GENERATION,
+                    input_data={
+                        "topic": topic,
+                        "level": level,
+                        "knowledge_level": level,
+                        "user_id": user.pk,
+                        "syllabus_id": str(new_syllabus.syllabus_id), # Pass syllabus ID to task
+                    },
+                )
+                process_ai_task(str(task.task_id))
+                logger.info(f"Enqueued SYLLABUS_GENERATION task {task.task_id} for syllabus {new_syllabus.syllabus_id}.")
+                redirect_url = reverse("onboarding:generating_syllabus", kwargs={"syllabus_id": new_syllabus.syllabus_id})
+
+        return JsonResponse({"redirect_url": redirect_url})
+
+    except json.JSONDecodeError:
+        logger.error(f"Invalid JSON received in initiate_syllabus request for user {user.pk}")
+        return JsonResponse({"error": "Invalid JSON format."}, status=400)
+    except NoReverseMatch as e:
+        logger.error(f"Could not reverse URL during syllabus initiation for user {user.pk}: {e}", exc_info=True)
+        return JsonResponse({"error": "Failed to generate redirect URL."}, status=500)
+    except Exception as e:
+        logger.error(f"Error initiating syllabus for user {user.pk}: {e}", exc_info=True)
+        return JsonResponse({"error": "An unexpected error occurred."}, status=500)
 
 
 @login_required
@@ -482,7 +527,7 @@ def poll_syllabus_status_view(
     )
 
     if syllabus.user != user:
-        owner_pk = syllabus.user.pk if syllabus.user else "Unknown"
+        owner_pk = cast(User, syllabus.user).pk if syllabus.user else "Unknown" # type: ignore[attr-defined]
         logger.warning(
             f"User {user.pk} attempted to poll status for syllabus {syllabus_id} owned by {owner_pk}"
         )

@@ -28,6 +28,8 @@ urlpatterns = [
     # URL to handle skipping the assessment
     # pylint: disable=no-member
     path('skip/', views.skip_assessment_view, name='skip_assessment'),
+    # URL to initiate syllabus generation after assessment
+    path("initiate-syllabus/", views.initiate_syllabus_view, name="initiate_syllabus"),
     # URL to show the 'generating syllabus' loading page
     path("generating/<uuid:syllabus_id>/", views.generating_syllabus_view, name="generating_syllabus"),
     # URL for the frontend to poll syllabus generation status

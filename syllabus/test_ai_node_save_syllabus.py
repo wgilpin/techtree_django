@@ -104,7 +104,8 @@ def test_save_syllabus_create_new(test_user):
     assert Syllabus.objects.filter(pk=saved_uid).exists()  # pylint: disable=no-member
     saved_syllabus = Syllabus.objects.get(pk=saved_uid)  # pylint: disable=no-member
     assert saved_syllabus.topic == topic
-    assert saved_syllabus.level == level # Compare against the lowercase 'beginner' used in generated_syllabus_content
+    # Compare against the display value expected to be saved
+    assert saved_syllabus.level == DIFFICULTY_BEGINNER
     assert saved_syllabus.user == test_user
     # assert saved_syllabus.is_master is False # is_master is not a model field
     assert saved_syllabus.modules.count() == 1

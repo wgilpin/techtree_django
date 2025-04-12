@@ -4,8 +4,9 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+        
         {
-            "name": "Python: Django Runserver",
+            "name": "Django Runserver",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/manage.py",
@@ -17,7 +18,7 @@
             "envFile": "${workspaceFolder}/.env" // Ensure .env variables are loaded
         },
         {
-            "name": "Python: Django process_tasks",
+            "name": "Django process_tasks",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/manage.py",

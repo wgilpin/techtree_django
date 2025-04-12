@@ -19,6 +19,7 @@ class AITask(models.Model):
         SYLLABUS_GENERATION = "syllabus_generation", "Syllabus Generation"
         LESSON_CONTENT = "lesson_content", "Lesson Content Generation"
         LESSON_INTERACTION = "lesson_interaction", "Lesson Interaction"
+        ONBOARDING_ASSESSMENT = "onboarding_assessment", "Onboarding Assessment"
 
     class TaskStatus(models.TextChoices):
         """

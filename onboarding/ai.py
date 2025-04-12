@@ -253,22 +253,13 @@ class TechTreeAI:
             # Update state
             new_questions = state.get("questions_asked", []) + [question_data]
             # Ensure difficulty from LLM is treated as int
-            llm_difficulty = question_data.get(
-                "difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY
-            )
-            try:
-                current_difficulty_int = int(llm_difficulty)
-                # Validate range (0-3 based on constants)
-                if not 0 <= current_difficulty_int <= 3:
-                    logger.warning(
-                        f"LLM returned out-of-range difficulty '{llm_difficulty}', defaulting "
-                        f"to {settings.ONBOARDING_DEFAULT_DIFFICULTY}."
-                    )
-                    current_difficulty_int = settings.ONBOARDING_DEFAULT_DIFFICULTY
-            except (ValueError, TypeError):
+            # Always use the intended target difficulty from state, not the LLM's suggestion
+            current_difficulty_int = int(state.get("current_target_difficulty", settings.ONBOARDING_DEFAULT_DIFFICULTY))
+            # Validate range (0-3 based on constants)
+            if not 0 <= current_difficulty_int <= 3:
                 logger.warning(
-                    f"LLM returned non-integer difficulty '{llm_difficulty}', "
-                    f"defaulting to {settings.ONBOARDING_DEFAULT_DIFFICULTY}."
+                    f"Target difficulty '{current_difficulty_int}' out of range, defaulting "
+                    f"to {settings.ONBOARDING_DEFAULT_DIFFICULTY}."
                 )
                 current_difficulty_int = settings.ONBOARDING_DEFAULT_DIFFICULTY
 
