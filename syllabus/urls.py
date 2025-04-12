@@ -20,7 +20,7 @@ urlpatterns = [
         views.lesson_detail,
         name="lesson_detail",
     ),
-    path("wait/<uuid:task_id>/", views.wait_for_generation, name="wait_for_generation"),
+    path("wait/<uuid:syllabus_id>/", views.wait_for_generation, name="wait_for_generation"),
 
     # Add other syllabus-related URLs here
 ]

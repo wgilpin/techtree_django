@@ -129,9 +129,9 @@ def syllabus_detail(request: HttpRequest, syllabus_id: str) -> HttpResponse:
             )
 
             if task:
-                # Redirect to wait page with task_id for polling
+                # Redirect to wait page with syllabus_id for polling
                 return redirect(
-                    reverse("syllabus:wait_for_generation", args=[task.task_id])
+                    reverse("syllabus:wait_for_generation", args=[syllabus_id])
                 )
             else:
                 # Fallback if no task found
@@ -179,7 +179,7 @@ def syllabus_detail(request: HttpRequest, syllabus_id: str) -> HttpResponse:
 
             if task:
                 return redirect(
-                    reverse("syllabus:wait_for_generation", args=[task.task_id])
+                    reverse("syllabus:wait_for_generation", args=[syllabus_id])
                 )
             else:
                 # Fallback if no task found
@@ -201,7 +201,7 @@ def syllabus_detail(request: HttpRequest, syllabus_id: str) -> HttpResponse:
 
         if task:
             return redirect(
-                reverse("syllabus:wait_for_generation", args=[task.task_id])
+                reverse("syllabus:wait_for_generation", args=[syllabus_id])
             )
         else:
             # Fallback if no task found
@@ -244,9 +244,9 @@ def module_detail(
             return redirect(reverse("syllabus:landing"))
 
         if task.status in [AITask.TaskStatus.PENDING, AITask.TaskStatus.PROCESSING]:
-            # Redirect to wait page with task_id for polling
+            # Redirect to wait page with syllabus_id for polling
             return redirect(
-                reverse("syllabus:wait_for_generation", args=[task.task_id])
+                reverse("syllabus:wait_for_generation", args=[syllabus_id])
             )
 
         if task.status == AITask.TaskStatus.FAILED:
@@ -310,9 +310,9 @@ def lesson_detail(
             return redirect(reverse("syllabus:landing"))
 
         if task.status in [AITask.TaskStatus.PENDING, AITask.TaskStatus.PROCESSING]:
-            # Redirect to wait page with task_id for polling
+            # Redirect to wait page with syllabus_id for polling
             return redirect(
-                reverse("syllabus:wait_for_generation", args=[task.task_id])
+                reverse("syllabus:wait_for_generation", args=[syllabus_id])
             )
 
         if task.status == AITask.TaskStatus.FAILED:
@@ -357,8 +357,8 @@ def lesson_detail(
         )
 
 
-def wait_for_generation(request: HttpRequest, task_id: str) -> HttpResponse:
+def wait_for_generation(request: HttpRequest, syllabus_id: str) -> HttpResponse:
     """
-    Show waiting page while syllabus is being generated. The frontend should poll the task status API.
+    Show waiting page while syllabus is being generated. The frontend should poll the syllabus status API.
     """
-    return render(request, "syllabus/wait.html", {"task_id": task_id})
+    return render(request, "syllabus/wait.html", {"syllabus_id": syllabus_id})

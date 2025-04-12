@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Generating Syllabus - TechTree{% endblock %}
+
+{% block content %}
+<body data-poll-url="/onboarding/poll-syllabus-status/{{ syllabus_id }}/">
+<div class="container mt-5 text-center">
+    <div class="spinner-border text-primary" role="status" style="width: 4rem; height: 4rem;">
+        <span class="visually-hidden">Loading...</span>
+    </div>
+    <h2 class="mt-4">Please wait while your syllabus is being prepared...</h2>
+    <p>This may take a moment. This page will automatically update when your syllabus is ready.</p>
+    <div id="wait-error" class="alert alert-danger d-none mt-3"></div>
+</div>
+</body>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    const syllabusId = "{{ syllabus_id }}";
+    // Expose the polling URL in a data attribute for testability
+    document.addEventListener("DOMContentLoaded", function() {
+        document.body.setAttribute("data-poll-url", `/onboarding/poll-syllabus-status/${syllabusId}/`);
+    });
+    const pollUrl = `/onboarding/poll-syllabus-status/${syllabusId}/`;
+    const redirectDelay = 1000; // ms between polls
+
+    function pollStatus() {
+        fetch(pollUrl, { credentials: "same-origin" })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === "COMPLETED" || data.status === "completed") {
+                    if (data.syllabus_url) {
+                        window.location.href = data.syllabus_url;
+                    } else {
+                        showError("Syllabus is ready but no URL was provided.");
+                    }
+                } else if (data.status === "FAILED" || data.status === "failed") {
+                    showError("Syllabus generation failed. Please try again.");
+                } else {
+                    setTimeout(pollStatus, redirectDelay);
+                }
+            })
+            .catch(() => {
+                showError("Error checking syllabus status. Retrying...");
+                setTimeout(pollStatus, 3000);
+            });
+    }
+
+    function showError(msg) {
+        const errorDiv = document.getElementById("wait-error");
+        errorDiv.textContent = msg;
+        errorDiv.classList.remove("d-none");
+    }
+
+    document.addEventListener("DOMContentLoaded", pollStatus);
+})();
+</script>
+{% endblock %}
