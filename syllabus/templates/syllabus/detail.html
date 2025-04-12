@@ -31,9 +31,9 @@
                     </div>
 
                     <div class="lessons-list">
-                        {# Access lessons directly from the module dictionary #}
-                        {% if module.lessons %}
-                             {% for lesson in module.lessons %}
+                        {# Access lessons by calling .all() on the RelatedManager #}
+                        {% if module.lessons.all %}
+                             {% for lesson in module.lessons.all %}
                                 <div class="lesson-item">
                                     <div class="lesson-info">
                                         <span class="lesson-number">Lesson {{ lesson.absolute_lesson_number }}</span>

@@ -3,18 +3,15 @@
 # pylint: disable=no-member, missing-function-docstring, redefined-outer-name
 
 import pytest
-from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.test import AsyncClient, Client
+from django.test import Client
 
 from core.models import Syllabus, Module, Lesson
 from core.constants import DIFFICULTY_BEGINNER  # Import constant
 from syllabus.services import SyllabusService
 
 User = get_user_model()
-
-
 
 
 @pytest.fixture(scope="function")
@@ -31,14 +28,6 @@ def syllabus_service():
     return SyllabusService()
 
 
-@pytest.fixture
-async def existing_syllabus_async(test_user_sync):  # Use the SYNC user fixture
-    """Provides an asynchronously created syllabus linked to a sync user."""
-    # Pass the sync user to the async creator helper
-    return await create_syllabus_async(test_user_sync)
-
-
-# Synchronous version of the syllabus fixture
 @pytest.fixture
 def existing_syllabus_sync(test_user_sync):
     """Provides a synchronously created syllabus linked to a sync user."""
@@ -80,30 +69,8 @@ def existing_syllabus_sync(test_user_sync):
 
 
 @pytest.fixture
-def async_client():
-    return AsyncClient()
-
-
-@pytest.fixture
 def client():
     return Client()
-
-
-@pytest.fixture
-async def logged_in_async_client(async_client, test_user_sync):  # Use sync user fixture
-    """Logs in a user for the AsyncClient by setting the session cookie manually."""
-    user = test_user_sync  # Get the sync user
-    sync_client = Client()  # Use standard sync client to login and get cookie
-
-    # Perform login synchronously
-    sync_client.login(username=user.username, password="password")
-
-    # Get session cookie from sync client and set it on async client
-    cookie = sync_client.cookies.get(settings.SESSION_COOKIE_NAME)
-    if cookie:
-        async_client.cookies[settings.SESSION_COOKIE_NAME] = cookie.value
-
-    return async_client
 
 
 @pytest.fixture

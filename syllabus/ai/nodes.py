@@ -262,7 +262,7 @@ def search_database(state: SyllabusState) -> Dict[str, Any]:
 
 def search_internet(
     state: SyllabusState, tavily_client: Optional[TavilyClient]
-) -> Dict[str, List[str]]:  # Changed return type hint
+) -> Dict[str, List[str]]:
     """Performs a web search using Tavily to gather context."""
     if not tavily_client:
         logger.warning("Tavily client not configured. Skipping internet search.")

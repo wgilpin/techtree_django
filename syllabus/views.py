@@ -1,15 +1,18 @@
 """Views for the syllabus app."""
 
 import logging
-
+from typing import cast
+from django.contrib.auth import get_user_model
+User = get_user_model()
+ 
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
-
+ 
 from taskqueue.models import AITask
 from taskqueue.tasks import process_ai_task  # type: ignore[attr-defined]  # pylint: disable=no-name-in-module
 from core.models import Syllabus
-
+ 
 from .services import SyllabusService
 
 
@@ -44,7 +47,8 @@ def generate_syllabus_view(request: HttpRequest) -> HttpResponse:
 
         if not topic:
             logger.warning("Syllabus generation request missing topic.")
-            return redirect(reverse("syllabus:landing"))
+            # Missing topic: redirect to onboarding start page
+            return redirect(reverse("onboarding_start", args=[""]))
 
         try:
 
@@ -64,14 +68,15 @@ def generate_syllabus_view(request: HttpRequest) -> HttpResponse:
             process_ai_task(str(task.task_id))
 
             # Redirect to a waiting/progress page (to be implemented)
-            return redirect(reverse("syllabus:landing"))  # Placeholder
+            return redirect(reverse("syllabus:wait_for_generation", args=[str(task.input_data.get("syllabus_id", "")) if "syllabus_id" in task.input_data else str(getattr(task, "syllabus_id", ""))]))
 
         except Exception as e:
             logger.exception("Error creating syllabus background task: %s", str(e))
-            return redirect(reverse("syllabus:landing"))
+            # Error in syllabus generation: redirect to onboarding start page
+            return redirect(reverse("onboarding_start", args=[""]))
 
     # GET or other methods
-    return redirect(reverse("syllabus:landing"))
+    return redirect(reverse("onboarding_start", args=[""]))
 
 
 def syllabus_detail(request: HttpRequest, syllabus_id: str) -> HttpResponse:
@@ -86,7 +91,8 @@ def syllabus_detail(request: HttpRequest, syllabus_id: str) -> HttpResponse:
         syllabus = Syllabus.objects.filter(syllabus_id=syllabus_id).first()
         if not syllabus:
             logger.warning(f"Syllabus {syllabus_id} not found.")
-            return redirect(reverse("syllabus:landing"))
+            # Syllabus not found: redirect to onboarding start page
+            return redirect(reverse("onboarding_start", args=[""]))
         logger.info(f"Syllabus found with status: {syllabus.status}")
 
         # First check if the syllabus itself is completed
@@ -156,9 +162,34 @@ def syllabus_detail(request: HttpRequest, syllabus_id: str) -> HttpResponse:
         if failed_task:
             # If there's a failed task, redirect to landing page
             logger.warning(
-                f"Failed task found for syllabus {syllabus_id}, redirecting to landing page"
+                f"Failed task found for syllabus {syllabus_id}, regenerating."
             )
-            return redirect(reverse("syllabus:landing"))
+            # Failed task: trigger new generation and redirect to wait
+            try:
+                user_obj = getattr(syllabus, "user", None)
+                user_val = user_obj if isinstance(user_obj, User) else None
+                new_task = AITask.objects.create(
+                    task_type=AITask.TaskType.SYLLABUS_GENERATION,
+                    syllabus=syllabus,
+                    user=user_val,
+                    input_data={
+                        "topic": syllabus.topic,
+                        "knowledge_level": syllabus.level,
+                        "user_id": str(syllabus.user_id) if syllabus.user_id is not None else "",
+                        "syllabus_id": str(syllabus_id),
+                    },
+                )
+                process_ai_task(str(new_task.task_id))
+                return redirect(
+                    reverse("syllabus:wait_for_generation", args=[syllabus_id])
+                )
+            except Exception as e:
+                logger.error(f"Failed to create new AITask for syllabus {syllabus_id}: {e}", exc_info=True)
+                return render(
+                    request,
+                    "syllabus/wait.html",
+                    {"syllabus_id": syllabus_id, "error_message": "Failed to start syllabus generation. Please try again later."},
+                )
 
         if syllabus.status == Syllabus.StatusChoices.FAILED:
             # Trigger background task to regenerate
@@ -204,17 +235,39 @@ def syllabus_detail(request: HttpRequest, syllabus_id: str) -> HttpResponse:
                 reverse("syllabus:wait_for_generation", args=[syllabus_id])
             )
         else:
-            # Fallback if no task found
-            return render(
-                request,
-                "syllabus/wait.html",
-                {"syllabus_id": syllabus_id},
+            # No task found: assume previous attempt failed, create a new AITask and start processing
+            try:
+                user_obj = getattr(syllabus, "user", None)
+                user_val = user_obj if isinstance(user_obj, User) else None
+                new_task = AITask.objects.create(
+                    task_type=AITask.TaskType.SYLLABUS_GENERATION,
+                    syllabus=syllabus,
+                    user=user_val,
+                    input_data={
+                        "topic": syllabus.topic,
+                        "knowledge_level": syllabus.level,
+                        "user_id": str(syllabus.user_id) if syllabus.user_id is not None else "",
+                        "syllabus_id": str(syllabus_id),
+                    },
+                )
+                process_ai_task(str(new_task.task_id))
+            except Exception as e:
+                logger.error(f"Failed to create new AITask for syllabus {syllabus_id}: {e}", exc_info=True)
+                # Optionally, show an error page or message
+                return render(
+                    request,
+                    "syllabus/wait.html",
+                    {"syllabus_id": syllabus_id, "error_message": "Failed to start syllabus generation. Please try again later."},
+                )
+            return redirect(
+                reverse("syllabus:wait_for_generation", args=[syllabus_id])
             )
 
     except Exception as e:
         logger.error(f"Error displaying syllabus {syllabus_id}: {e}", exc_info=True)
         logger.error(f"Exception type: {type(e)}")
-        return redirect(reverse("syllabus:landing"))
+        # Exception: redirect to onboarding start page
+        return redirect(reverse("onboarding_start", args=[""]))
 
 
 def module_detail(
@@ -241,7 +294,33 @@ def module_detail(
             logger.warning(
                 f"No background task found for syllabus {syllabus_id}. Need module detail"
             )
-            return redirect(reverse("syllabus:landing"))
+            # No task found: trigger new generation and redirect to wait
+            try:
+                syllabus = Syllabus.objects.filter(syllabus_id=syllabus_id).first()
+                user_obj = getattr(syllabus, "user", None) if syllabus else None
+                user_val = user_obj if isinstance(user_obj, User) else None
+                new_task = AITask.objects.create(
+                    task_type=AITask.TaskType.SYLLABUS_GENERATION,
+                    syllabus=syllabus,
+                    user=user_val,
+                    input_data={
+                        "topic": syllabus.topic if syllabus else "",
+                        "knowledge_level": syllabus.level if syllabus else "",
+                        "user_id": str(syllabus.user_id) if syllabus and syllabus.user_id is not None else "",
+                        "syllabus_id": str(syllabus_id),
+                    },
+                )
+                process_ai_task(str(new_task.task_id))
+                return redirect(
+                    reverse("syllabus:wait_for_generation", args=[syllabus_id])
+                )
+            except Exception as e:
+                logger.error(f"Failed to create new AITask for syllabus {syllabus_id}: {e}", exc_info=True)
+                return render(
+                    request,
+                    "syllabus/wait.html",
+                    {"syllabus_id": syllabus_id, "error_message": "Failed to start syllabus generation. Please try again later."},
+                )
 
         if task.status in [AITask.TaskStatus.PENDING, AITask.TaskStatus.PROCESSING]:
             # Redirect to wait page with syllabus_id for polling
@@ -307,7 +386,33 @@ def lesson_detail(
             logger.warning(
                 f"No background task found for syllabus {syllabus_id} . Need Lesson detail"
             )
-            return redirect(reverse("syllabus:landing"))
+            # No task found: trigger new generation and redirect to wait
+            try:
+                syllabus = Syllabus.objects.filter(syllabus_id=syllabus_id).first()
+                user_obj = getattr(syllabus, "user", None) if syllabus else None
+                user_val = user_obj if isinstance(user_obj, User) else None
+                new_task = AITask.objects.create(
+                    task_type=AITask.TaskType.SYLLABUS_GENERATION,
+                    syllabus=syllabus,
+                    user=user_val,
+                    input_data={
+                        "topic": syllabus.topic if syllabus else "",
+                        "knowledge_level": syllabus.level if syllabus else "",
+                        "user_id": str(syllabus.user_id) if syllabus and syllabus.user_id is not None else "",
+                        "syllabus_id": str(syllabus_id),
+                    },
+                )
+                process_ai_task(str(new_task.task_id))
+                return redirect(
+                    reverse("syllabus:wait_for_generation", args=[syllabus_id])
+                )
+            except Exception as e:
+                logger.error(f"Failed to create new AITask for syllabus {syllabus_id}: {e}", exc_info=True)
+                return render(
+                    request,
+                    "syllabus/wait.html",
+                    {"syllabus_id": syllabus_id, "error_message": "Failed to start syllabus generation. Please try again later."},
+                )
 
         if task.status in [AITask.TaskStatus.PENDING, AITask.TaskStatus.PROCESSING]:
             # Redirect to wait page with syllabus_id for polling

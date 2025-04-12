@@ -15,6 +15,16 @@ urlpatterns: list[URLPattern] = [
         name="lesson_detail",
     ),
     path(
+        "<uuid:syllabus_id>/module/<int:module_index>/lesson/<int:lesson_index>/wait/",
+        views.lesson_wait,
+        name="lesson_wait",
+    ),
+    path(
+        "<uuid:syllabus_id>/module/<int:module_index>/lesson/<int:lesson_index>/poll_lesson_ready/",
+        views.poll_lesson_ready,
+        name="poll_lesson_ready",
+    ),
+    path(
         "<uuid:syllabus_id>/module/<int:module_index>/lesson/<int:lesson_index>/interact/",
         views.handle_lesson_interaction,
         name="handle_interaction",

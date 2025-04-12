@@ -47,7 +47,7 @@ class SyllabusAI:
     def _create_workflow(self) -> StateGraph:
         """Defines the structure (nodes and edges) of the syllabus LangGraph workflow."""
         workflow = StateGraph(SyllabusState)
-
+    
         # Note: The first argument (state) is passed automatically by LangGraph
         # search_database now only takes state, no db_service needed
         search_internet_partial = partial(
@@ -56,18 +56,20 @@ class SyllabusAI:
         generate_syllabus_partial = partial(
             nodes.generate_syllabus, llm_model=self.llm_model
         )
-
+        save_syllabus_node = nodes.save_syllabus
+    
         # Add nodes using the standalone functions from nodes.py
         workflow.add_node(
             "search_database", nodes.search_database
         )  # Pass function directly
         workflow.add_node("search_internet", search_internet_partial)
         workflow.add_node("generate_syllabus", generate_syllabus_partial)
+        workflow.add_node("save_syllabus", save_syllabus_node)
         workflow.add_node("end_node", nodes.end_node)  # Use the simple end node
-
+    
         # Define edges and entry point
         workflow.set_entry_point("search_database")  # Start flow by searching DB
-
+    
         workflow.add_conditional_edges(
             "search_database",
             self._should_search_internet,
@@ -77,8 +79,9 @@ class SyllabusAI:
             },  # Route to end if found
         )
         workflow.add_edge("search_internet", "generate_syllabus")
-        workflow.add_edge("generate_syllabus", "end_node")  # Generation leads to end
-
+        workflow.add_edge("generate_syllabus", "save_syllabus")
+        workflow.add_edge("save_syllabus", "end_node")  # Save leads to end
+    
         return workflow
 
     def _should_search_internet(self, state: SyllabusState) -> str:
@@ -116,17 +119,16 @@ class SyllabusAI:
         }
 
     def get_or_create_syllabus(self) -> SyllabusState:
-        """Retrieves an existing syllabus or orchestrates the creation of a new one."""
+        """Retrieves an existing syllabus or orchestrates the creation of a new one (synchronous). Returns the full state dict."""
         if not self.state:
             raise ValueError("Agent not initialized. Call initialize() first.")
         if not self.graph:
             raise RuntimeError("Graph not compiled.")
         print("Starting get_or_create_syllabus graph execution...")
 
-        # Run the graph from the entry point ('search_database')
+        # Run the graph from the entry point ('search_database') using synchronous streaming
         final_state_updates = {}
         try:
-            # Stream the execution, starting with the current state
             for step in self.graph.stream(self.state, config={"recursion_limit": 10}):
                 node_name = list(step.keys())[0]
                 print(f"Graph Step: {node_name}")
@@ -171,8 +173,12 @@ class SyllabusAI:
             raise RuntimeError("Failed to get or create a valid syllabus.")
 
         print(f"Syllabus get/create finished. Result UID: {syllabus.get('uid', 'N/A')}")
-        # Cast to SyllabusState to satisfy mypy
-        return cast(SyllabusState, syllabus)
+        # Return the full state dictionary, not just the syllabus
+        return self.state
+
+    def get_or_create_syllabus_sync(self) -> SyllabusState:
+        """Alias for get_or_create_syllabus for compatibility."""
+        return self.get_or_create_syllabus()
 
     def update_syllabus(self, feedback: str) -> SyllabusState:
         """Updates the current syllabus based on user feedback."""
@@ -213,8 +219,7 @@ class SyllabusAI:
         return cast(SyllabusState, syllabus)
 
     # For test compatibility: add get_or_create_syllabus_sync as an alias
-    def get_or_create_syllabus_sync(self) -> SyllabusState:
-        return self.get_or_create_syllabus()
+    # (Removed duplicate definition; see above for correct implementation.)
 
     def save_syllabus(self) -> Dict[str, Optional[str]]:
         """Saves the current syllabus in the state to the database."""

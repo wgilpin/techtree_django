@@ -3,83 +3,39 @@
 import json  # Import json module
 import logging
 import uuid
-from typing import Optional, cast, Dict, Any
+from typing import Any, Dict, Optional, cast
 
-from asgiref.sync import sync_to_async
 from django.contrib import messages  # Add messages framework
 from django.contrib.auth.decorators import login_required  # Add login_required
 from django.contrib.auth.models import User  # Import User directly
-from django.http import JsonResponse
-from django.http import HttpRequest, HttpResponse, HttpResponseBadRequest
+from django.db import transaction  # Import transaction
+from django.http import (HttpRequest, HttpResponse, HttpResponseBadRequest,
+                         JsonResponse)
 from django.shortcuts import (  # Add redirect, get_object_or_404
-    get_object_or_404,
-    redirect,
-    render,
-)
+    get_object_or_404, redirect, render)
 from django.urls import NoReverseMatch, reverse
 from django.views.decorators.http import require_GET, require_POST
-from django.conf import settings # Import settings
-from django.db import transaction # Import transaction
 
 # Import difficulty constants
-from core.constants import DIFFICULTY_BEGINNER, DIFFICULTY_LEVELS, DIFFICULTY_FROM_VALUE
-
+from core.constants import (DIFFICULTY_BEGINNER, DIFFICULTY_FROM_VALUE,
+                            DIFFICULTY_LEVELS)
 # Import Syllabus Service and Exceptions
 # Import the model for saving results
 from core.models import Syllabus  # Import Syllabus model from core app
 from core.models import UserAssessment
+from onboarding.logic import get_ai_instance
 from syllabus.services import SyllabusService
-from taskqueue.models import AITask # Import AITask
-from taskqueue.tasks import process_ai_task # Import process_ai_task
+from taskqueue.models import AITask  # Import AITask
+from taskqueue.tasks import process_ai_task  # Import process_ai_task
+
 # Import AI logic and state definition
-from .ai import AgentState, TechTreeAI
+from .ai import AgentState
 
 logger = logging.getLogger(__name__)
 
-# --- Async Database/Session Wrappers ---
-
-
-# Wrap synchronous session operations needed in async views
-@sync_to_async
-def get_session_value(session, key, default=None):
-    """Asynchronously gets a value from the session."""
-    return session.get(key, default)
-
-
-@sync_to_async
-def set_session_value(session, key, value):
-    """Asynchronously sets a value in the session."""
-    session[key] = value
-    # Saving the session might also be needed depending on backend/settings
-    # session.save()
-
-
-@sync_to_async
-def del_session_key(session, key):
-    """Asynchronously deletes a key from the session."""
-    if key in session:
-        del session[key]
-        # session.save()
-
-
-# Wrap synchronous UserAssessment creation
-@sync_to_async
-def create_user_assessment(**kwargs):
-    """Asynchronously creates a UserAssessment record in the database."""
-    # Pass user object directly if available, or user_id if needed
-    # Ensure user object is fetched synchronously if passed by ID
-    return UserAssessment.objects.create(**kwargs)  # pylint: disable=no-member
-
-
-# --- Helper to get/initialize AI instance ---
-from .logic import get_ai_instance, handle_normal_answer, handle_skip_answer, generate_next_question
-
-
 syllabus_service = SyllabusService()
 
-
 # --- Assessment Views ---
-
 
 @require_GET
 def start_assessment_view(request: HttpRequest, topic: str) -> JsonResponse:
@@ -97,7 +53,9 @@ def start_assessment_view(request: HttpRequest, topic: str) -> JsonResponse:
         ai_instance = get_ai_instance()
         assessment_state = ai_instance.initialize_state(topic)
         assessment_state["user_id"] = user_id
-        logger.debug("After get_ai_instance and initialize_state, before perform_internet_search")
+        logger.debug(
+            "After get_ai_instance and initialize_state, before perform_internet_search"
+        )
 
         search_results = ai_instance.perform_internet_search(assessment_state)
         logger.debug("After perform_internet_search, before generate_question")
@@ -133,7 +91,9 @@ def start_assessment_view(request: HttpRequest, topic: str) -> JsonResponse:
         )
 
         difficulty_value: int = assessment_state.get("current_question_difficulty", 0)
-        difficulty_name = DIFFICULTY_FROM_VALUE.get(difficulty_value, DIFFICULTY_BEGINNER)
+        difficulty_name = DIFFICULTY_FROM_VALUE.get(
+            difficulty_value, DIFFICULTY_BEGINNER
+        )
         max_difficulty = len(DIFFICULTY_LEVELS)
 
         return JsonResponse(
@@ -175,7 +135,9 @@ def submit_answer_view(
         logger.error("Session data does not match expected AgentState structure.")
         if "assessment_state" in request.session:
             del request.session["assessment_state"]
-        return JsonResponse({"error": "Invalid assessment state found. Please restart."}, status=400)
+        return JsonResponse(
+            {"error": "Invalid assessment state found. Please restart."}, status=400
+        )
 
     # If assessment_state is provided in the request body, use it instead
     try:
@@ -186,31 +148,34 @@ def submit_answer_view(
         pass
 
     if assessment_state.get("is_complete", False):
-        return JsonResponse({
-            "is_complete": True,
-            "knowledge_level": assessment_state.get("knowledge_level"),
-            "score": assessment_state.get("score"),
-            "feedback": "Assessment already completed.",
-        })
+        return JsonResponse(
+            {
+                "is_complete": True,
+                "knowledge_level": assessment_state.get("knowledge_level"),
+                "score": assessment_state.get("score"),
+                "feedback": "Assessment already completed.",
+            }
+        )
 
     try:
         data = json.loads(request.body)
         answer = data.get("answer")
         is_skip = data.get("skip", False) is True
         if not answer and not is_skip:
-            return JsonResponse({"error": "Missing 'answer' or 'skip' flag in JSON payload."}, status=400)
+            return JsonResponse(
+                {"error": "Missing 'answer' or 'skip' flag in JSON payload."},
+                status=400,
+            )
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON format."}, status=400)
 
     # Save updated state back to session immediately
     request.session["assessment_state"] = assessment_state
 
-    from taskqueue.models import AITask
-    from taskqueue.tasks import process_ai_task
-
     user_obj = request.user if request.user.is_authenticated else None
 
     # Enqueue background task for answer evaluation and next question generation
+    # pylint: disable=no-member
     task = AITask.objects.create(
         task_type=AITask.TaskType.ONBOARDING_ASSESSMENT,
         input_data={
@@ -224,24 +189,19 @@ def submit_answer_view(
     )
     process_ai_task(str(task.task_id))
 
-    return JsonResponse({
-        "status": "processing",
-        "task_id": str(task.task_id),
-        "wait_url": f"/api/tasks/status/{task.task_id}/",
-        "message": "Processing your answer and generating next question.",
-    })
-
+    return JsonResponse(
+        {
+            "status": "processing",
+            "task_id": str(task.task_id),
+            "wait_url": f"/api/tasks/status/{task.task_id}/",
+            "message": "Processing your answer and generating next question.",
+        }
+    )
 
 
 def dict_to_agent_state(d: dict) -> AgentState:
     """Helper to coerce a dict to AgentState TypedDict."""
     return cast(AgentState, d)
-
-
-from typing import Awaitable
-
-# Functions generate_next_question, handle_normal_answer, handle_skip_answer
-# are imported from .logic and should not be redefined here.
 
 
 def finalize_assessment_and_trigger_syllabus_task(request, user, assessment_state):
@@ -250,15 +210,14 @@ def finalize_assessment_and_trigger_syllabus_task(request, user, assessment_stat
     level = assessment_state.get("knowledge_level")
 
     # Clear assessment state from session
-    from asgiref.sync import async_to_sync
-    async_to_sync(del_session_key)(request.session, "assessment_state")
+
+    del request.session["assessment_state"]
 
     if not topic or not level or not user.is_authenticated:
-        return {
-            "error": "Missing topic, level, or user not authenticated."
-        }
+        return {"error": "Missing topic, level, or user not authenticated."}
 
     # Create or get background task
+    # pylint: disable=no-member
     task, created = AITask.objects.get_or_create(
         user=user,
         task_type=AITask.TaskType.SYLLABUS_GENERATION,
@@ -273,13 +232,17 @@ def finalize_assessment_and_trigger_syllabus_task(request, user, assessment_stat
     )
 
     if created:
-        async_to_sync(process_ai_task)(str(task.task_id))
+        process_ai_task(str(task.task_id))
         feedback_msg = "Assessment complete. Syllabus generation started..."
     else:
-        feedback_msg = "Assessment complete. Syllabus generation is already in progress..."
+        feedback_msg = (
+            "Assessment complete. Syllabus generation is already in progress..."
+        )
 
     try:
-        wait_url = reverse("onboarding:wait_for_syllabus", kwargs={"task_id": task.task_id})
+        wait_url = reverse(
+            "onboarding:wait_for_syllabus", kwargs={"task_id": task.task_id}
+        )
     except NoReverseMatch:
         wait_url = None
 
@@ -295,7 +258,7 @@ def assessment_page_view(request: HttpRequest, topic: str) -> HttpResponse:
     """
     Renders the main assessment page, passing the topic and start URL. (Sync)
     """
-    # This view just renders the template, no async operations needed here
+    # This view just renders the template,
     try:
         start_url = reverse("onboarding:onboarding_start", kwargs={"topic": topic})
     except NoReverseMatch:
@@ -355,6 +318,7 @@ def skip_assessment_view(request: HttpRequest) -> HttpResponse:
 
 # --- Syllabus Initiation and Generation Views ---
 
+
 @login_required
 @require_POST
 def initiate_syllabus_view(request: HttpRequest) -> JsonResponse:
@@ -372,10 +336,16 @@ def initiate_syllabus_view(request: HttpRequest) -> JsonResponse:
         level = data.get("level")
 
         if not topic or not level:
-            logger.warning(f"Missing topic or level in initiate_syllabus request for user {user.pk}")
-            return JsonResponse({"error": "Missing 'topic' or 'level' in request."}, status=400)
+            logger.warning(
+                f"Missing topic or level in initiate_syllabus request for user {user.pk}"
+            )
+            return JsonResponse(
+                {"error": "Missing 'topic' or 'level' in request."}, status=400
+            )
 
-        logger.info(f"Initiating syllabus for user {user.pk}, topic='{topic}', level='{level}'")
+        logger.info(
+            f"Initiating syllabus for user {user.pk}, topic='{topic}', level='{level}'"
+        )
 
         # Clear assessment state from session if it exists
         if "assessment_state" in request.session:
@@ -389,15 +359,27 @@ def initiate_syllabus_view(request: HttpRequest) -> JsonResponse:
                 user=user,
                 topic=topic,
                 level=level,
-                status__in=[Syllabus.StatusChoices.PENDING, Syllabus.StatusChoices.GENERATING, Syllabus.StatusChoices.COMPLETED]
+                status__in=[
+                    Syllabus.StatusChoices.PENDING,
+                    Syllabus.StatusChoices.GENERATING,
+                    Syllabus.StatusChoices.COMPLETED,
+                ],
             ).first()
 
             if existing_user_syllabus:
-                logger.info(f"User {user.pk} already has syllabus {existing_user_syllabus.syllabus_id} for topic='{topic}', level='{level}'. Status: {existing_user_syllabus.status}")
+                logger.info(
+                    f"User {user.pk} already has syllabus {existing_user_syllabus.syllabus_id} for topic='{topic}', "
+                    f"level='{level}'. Status: {existing_user_syllabus.status}"
+                )
                 if existing_user_syllabus.status == Syllabus.StatusChoices.COMPLETED:
-                    redirect_url = reverse("syllabus:detail", args=[existing_user_syllabus.pk])
-                else: # Pending or Processing
-                    redirect_url = reverse("onboarding:generating_syllabus", kwargs={"syllabus_id": existing_user_syllabus.syllabus_id})
+                    redirect_url = reverse(
+                        "syllabus:detail", args=[existing_user_syllabus.pk]
+                    )
+                else:  # Pending or Processing
+                    redirect_url = reverse(
+                        "onboarding:generating_syllabus",
+                        kwargs={"syllabus_id": existing_user_syllabus.syllabus_id},
+                    )
                 return JsonResponse({"redirect_url": redirect_url})
 
             # 2. Check for a template syllabus (user=None) for this topic/level
@@ -405,34 +387,45 @@ def initiate_syllabus_view(request: HttpRequest) -> JsonResponse:
                 user=None,
                 topic=topic,
                 level=level,
-                status=Syllabus.StatusChoices.COMPLETED # Only copy completed templates
+                status=Syllabus.StatusChoices.COMPLETED,  # Only copy completed templates
             ).first()
 
             if template_syllabus:
                 # 3a. Copy template syllabus
-                logger.info(f"Found template syllabus {template_syllabus.syllabus_id} for topic='{topic}', level='{level}'. Copying for user {user.pk}.")
+                logger.info(
+                    f"Found template syllabus {template_syllabus.syllabus_id} for topic='{topic}', "
+                    f"level='{level}'. Copying for user {user.pk}."
+                )
                 new_syllabus = Syllabus.objects.create(
                     user=user,
                     topic=template_syllabus.topic,
                     level=template_syllabus.level,
                     user_entered_topic=template_syllabus.user_entered_topic,
-                    status=Syllabus.StatusChoices.COMPLETED # Mark as completed immediately
+                    status=Syllabus.StatusChoices.COMPLETED,  # Mark as completed immediately
                 )
-                logger.info(f"Created syllabus {new_syllabus.syllabus_id} for user {user.pk} by copying template.")
+                logger.info(
+                    f"Created syllabus {new_syllabus.syllabus_id} for user {user.pk} by copying template."
+                )
                 redirect_url = reverse("syllabus:detail", args=[new_syllabus.pk])
 
             else:
                 # 3b. Create new pending syllabus and trigger generation task
-                logger.info(f"No template syllabus found for topic='{topic}', level='{level}'. Creating new pending syllabus for user {user.pk}.")
+                logger.info(
+                    f"No template syllabus found for topic='{topic}', level='{level}'. "
+                    f"Creating new pending syllabus for user {user.pk}."
+                )
                 new_syllabus = Syllabus.objects.create(
                     user=user,
                     topic=topic,
                     level=level,
-                    status=Syllabus.StatusChoices.PENDING
+                    status=Syllabus.StatusChoices.PENDING,
                 )
-                logger.info(f"Created pending syllabus {new_syllabus.syllabus_id} for user {user.pk}.")
+                logger.info(
+                    f"Created pending syllabus {new_syllabus.syllabus_id} for user {user.pk}."
+                )
 
                 # Create and enqueue the background task
+                # pylint: disable=no-member
                 task = AITask.objects.create(
                     user=user,
                     task_type=AITask.TaskType.SYLLABUS_GENERATION,
@@ -441,23 +434,37 @@ def initiate_syllabus_view(request: HttpRequest) -> JsonResponse:
                         "level": level,
                         "knowledge_level": level,
                         "user_id": user.pk,
-                        "syllabus_id": str(new_syllabus.syllabus_id), # Pass syllabus ID to task
+                        "syllabus_id": str(
+                            new_syllabus.syllabus_id
+                        ),  # Pass syllabus ID to task
                     },
                 )
                 process_ai_task(str(task.task_id))
-                logger.info(f"Enqueued SYLLABUS_GENERATION task {task.task_id} for syllabus {new_syllabus.syllabus_id}.")
-                redirect_url = reverse("onboarding:generating_syllabus", kwargs={"syllabus_id": new_syllabus.syllabus_id})
+                logger.info(
+                    f"Enqueued SYLLABUS_GENERATION task {task.task_id} for syllabus {new_syllabus.syllabus_id}."
+                )
+                redirect_url = reverse(
+                    "onboarding:generating_syllabus",
+                    kwargs={"syllabus_id": new_syllabus.syllabus_id},
+                )
 
         return JsonResponse({"redirect_url": redirect_url})
 
     except json.JSONDecodeError:
-        logger.error(f"Invalid JSON received in initiate_syllabus request for user {user.pk}")
+        logger.error(
+            f"Invalid JSON received in initiate_syllabus request for user {user.pk}"
+        )
         return JsonResponse({"error": "Invalid JSON format."}, status=400)
     except NoReverseMatch as e:
-        logger.error(f"Could not reverse URL during syllabus initiation for user {user.pk}: {e}", exc_info=True)
+        logger.error(
+            f"Could not reverse URL during syllabus initiation for user {user.pk}: {e}",
+            exc_info=True,
+        )
         return JsonResponse({"error": "Failed to generate redirect URL."}, status=500)
     except Exception as e:
-        logger.error(f"Error initiating syllabus for user {user.pk}: {e}", exc_info=True)
+        logger.error(
+            f"Error initiating syllabus for user {user.pk}: {e}", exc_info=True
+        )
         return JsonResponse({"error": "An unexpected error occurred."}, status=500)
 
 
@@ -470,7 +477,9 @@ def generating_syllabus_view(
     logger.info(f"Displaying generating syllabus page for syllabus_id='{syllabus_id}'")
     # This view is synchronous, so direct DB access is okay here.
     # Use select_related to potentially optimize if user is accessed in template.
-    syllabus = get_object_or_404(Syllabus.objects.select_related('user'), syllabus_id=syllabus_id)
+    syllabus = get_object_or_404(
+        Syllabus.objects.select_related("user"), syllabus_id=syllabus_id
+    )
 
     # Ensure the user requesting the page is the owner of the syllabus
     # @login_required ensures request.user is authenticated User
@@ -488,7 +497,9 @@ def generating_syllabus_view(
 
     try:
         # Generate the polling URL using the syllabus_id
-        poll_url = reverse("onboarding:poll_syllabus_status", kwargs={"syllabus_id": syllabus_id})
+        poll_url = reverse(
+            "onboarding:poll_syllabus_status", kwargs={"syllabus_id": syllabus_id}
+        )
     except NoReverseMatch:
         logger.error(
             f"Could not reverse URL for poll_syllabus_status with syllabus_id={syllabus_id}"
@@ -506,7 +517,7 @@ def generating_syllabus_view(
     return render(request, "onboarding/generating_syllabus.html", context)
 
 
-# @login_required # Cannot use decorator with async view, check manually
+@login_required
 @require_GET  # Or POST if CSRF protection is strictly needed for polling
 def poll_syllabus_status_view(
     request: HttpRequest, syllabus_id: uuid.UUID
@@ -514,20 +525,17 @@ def poll_syllabus_status_view(
     """Poll endpoint to check the status of syllabus generation using its ID."""
     user = request.user
     if not user.is_authenticated:
-        logger.warning(
-            "Unauthenticated user attempted to poll syllabus status."
-        )
+        logger.warning("Unauthenticated user attempted to poll syllabus status.")
         return JsonResponse(
             {"status": "error", "message": "Authentication required."}, status=401
         )
 
     syllabus = get_object_or_404(
-        Syllabus.objects.select_related('user'),
-        syllabus_id=syllabus_id
+        Syllabus.objects.select_related("user"), syllabus_id=syllabus_id
     )
 
     if syllabus.user != user:
-        owner_pk = cast(User, syllabus.user).pk if syllabus.user else "Unknown" # type: ignore[attr-defined]
+        owner_pk = cast(User, syllabus.user).pk if syllabus.user else "Unknown"  # type: ignore[attr-defined]
         logger.warning(
             f"User {user.pk} attempted to poll status for syllabus {syllabus_id} owned by {owner_pk}"
         )
@@ -535,9 +543,7 @@ def poll_syllabus_status_view(
             {"status": "error", "message": "Permission denied."}, status=403
         )
 
-    logger.info(
-        f"Syllabus {syllabus_id} status for user {user.pk}: {syllabus.status}"
-    )
+    logger.info(f"Syllabus {syllabus_id} status for user {user.pk}: {syllabus.status}")
 
     response_data = {"status": syllabus.status}
 
@@ -549,9 +555,7 @@ def poll_syllabus_status_view(
                 f"Syllabus {syllabus_id} completed. Providing URL: {syllabus_url}"
             )
         except NoReverseMatch:
-            logger.error(
-                f"Could not reverse syllabus detail URL for ID {syllabus.pk}"
-            )
+            logger.error(f"Could not reverse syllabus detail URL for ID {syllabus.pk}")
             response_data["message"] = "Syllabus ready but URL generation failed."
     elif syllabus.status == Syllabus.StatusChoices.FAILED.value:
         logger.warning(f"Syllabus {syllabus_id} generation failed.")

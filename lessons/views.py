@@ -36,6 +36,52 @@ logger = logging.getLogger(__name__)
 # Type alias for auth user to avoid mypy errors
 AuthUserType = Any  # Replace with actual type when available
 
+from django.views.decorators.csrf import csrf_exempt
+
+@require_GET
+@login_required
+def lesson_wait(
+    request: HttpRequest, syllabus_id: str, module_index: int, lesson_index: int
+) -> HttpResponse:
+    """
+    Show waiting page while lesson content is being generated.
+    """
+    return render(
+        request,
+        "lessons/wait.html",
+        {
+            "syllabus_id": syllabus_id,
+            "module_index": module_index,
+            "lesson_index": lesson_index,
+        },
+    )
+
+@require_GET
+@login_required
+def poll_lesson_ready(
+    request: HttpRequest, syllabus_id: str, module_index: int, lesson_index: int
+) -> JsonResponse:
+    """
+    Minimal endpoint for polling if lesson content is ready.
+    Returns JSON: {status: "COMPLETED"|"GENERATING"|"FAILED"|...}
+    """
+    try:
+        lesson = get_object_or_404(
+            Lesson,
+            module__syllabus__pk=syllabus_id,
+            module__module_index=module_index,
+            lesson_index=lesson_index,
+        )
+        lesson_content = LessonContent.objects.filter(lesson=lesson).first()
+        if lesson_content and lesson_content.status == LessonContent.StatusChoices.COMPLETED:
+            return JsonResponse({"status": "COMPLETED"})
+        elif lesson_content and lesson_content.status == LessonContent.StatusChoices.FAILED:
+            return JsonResponse({"status": "FAILED"})
+        else:
+            return JsonResponse({"status": "GENERATING"})
+    except Exception as e:
+        logger.error(f"Error in poll_lesson_ready: {e}", exc_info=True)
+        return JsonResponse({"status": "ERROR", "error": str(e)}, status=500)
 
 def clean_exposition_string(text: Optional[str]) -> Optional[str]:
     """Decodes unicode escapes and fixes specific known issues in exposition text."""
@@ -115,6 +161,76 @@ def lesson_detail(
         module = get_object_or_404(Module, syllabus=syllabus, module_index=module_index)
         lesson = get_object_or_404(Lesson, module=module, lesson_index=lesson_index)
 
+        # --- Fetch existing data, but don't trigger generation here ---
+        progress, created = UserProgress.objects.get_or_create(
+            user=user,
+            syllabus=syllabus,
+            lesson=lesson,
+            defaults={
+                "module_index": module.module_index,
+                "lesson_index": lesson.lesson_index,
+                "status": "not_started",
+            },
+        )
+
+        current_lesson_content: Optional[LessonContent] = LessonContent.objects.filter(
+            lesson=lesson
+        ).first()  # Type hint
+
+        # --- Determine Content Status ---
+        content_status: str = "NOT_FOUND"  # Default if no record
+        if current_lesson_content:
+            content_status = (
+                current_lesson_content.status
+            )  # Get status from the model field
+        else:
+            # No content exists: create a LessonContent record and trigger generation
+            from taskqueue.models import AITask
+            from taskqueue.tasks import process_ai_task
+
+            current_lesson_content = LessonContent.objects.create(
+                lesson=lesson,
+                content={},
+                status=LessonContent.StatusChoices.PENDING,
+            )
+            content_status = LessonContent.StatusChoices.PENDING
+
+            # Only create a task if one is not already pending/processing for this lesson
+            existing_task = (
+                AITask.objects.filter(
+                    lesson=lesson,
+                    task_type=AITask.TaskType.LESSON_CONTENT,
+                    status__in=[
+                        AITask.TaskStatus.PENDING,
+                        AITask.TaskStatus.PROCESSING,
+                    ],
+                )
+                .order_by("-created_at")
+                .first()
+            )
+            if not existing_task:
+                user_obj = cast(AuthUserType, request.user)
+                task = AITask.objects.create(
+                    task_type=AITask.TaskType.LESSON_CONTENT,
+                    input_data={"lesson_id": str(lesson.pk)},
+                    user=user_obj,
+                    lesson=lesson,
+                )
+                process_ai_task(str(task.task_id))
+
+        # If content is not ready, redirect to wait page
+        if content_status in [
+            LessonContent.StatusChoices.PENDING,
+            LessonContent.StatusChoices.GENERATING,
+            "NOT_FOUND",
+        ]:
+            return redirect(
+                "lessons:lesson_wait",
+                syllabus_id=syllabus_id,
+                module_index=module_index,
+                lesson_index=lesson_index,
+            )
+
         # --- Calculate Absolute Lesson Number ---
         absolute_lesson_number: Optional[int] = None
         try:
@@ -134,18 +250,6 @@ def lesson_detail(
             )
             # Proceed without absolute number if calculation fails
 
-        # --- Fetch existing data, but don't trigger generation here ---
-        progress, created = UserProgress.objects.get_or_create(
-            user=user,
-            syllabus=syllabus,
-            lesson=lesson,
-            defaults={
-                "module_index": module.module_index,
-                "lesson_index": lesson.lesson_index,
-                "status": "not_started",
-            },
-        )
-
         if created:
             initial_lesson_content = LessonContent.objects.filter(
                 lesson=lesson, status=LessonContent.StatusChoices.COMPLETED
@@ -161,109 +265,6 @@ def lesson_detail(
             logger.info(
                 "Set/updated UserProgress %s status to 'in_progress'.", progress.pk
             )
-
-        # Try fetching existing content only
-        current_lesson_content: Optional[LessonContent] = LessonContent.objects.filter(
-            lesson=lesson
-        ).first()  # Type hint
-
-        # --- Determine Content Status ---
-        content_status: str = "NOT_FOUND"  # Default if no record
-        if current_lesson_content:
-            content_status = (
-                current_lesson_content.status
-            )  # Get status from the model field
-
-            # If status is FAILED, trigger regeneration
-            if content_status == LessonContent.StatusChoices.FAILED:
-                logger.info(
-                    f"Found FAILED content for lesson {lesson.pk}. Triggering regeneration."
-                )
-                # Create a task to regenerate content in the background
-
-                user_obj = cast(AuthUserType, request.user)
-
-                task = AITask.objects.create(  # type: ignore[attr-defined]
-                    task_type=AITask.TaskType.LESSON_CONTENT,
-                    input_data={
-                        "lesson_id": str(lesson.pk),
-                    },
-                    user=user_obj,
-                    lesson=lesson,
-                )
-
-                process_ai_task(str(task.task_id))
-
-                # Add a message to inform the user
-                messages.info(
-                    request, "Lesson content generation failed previously. Retrying..."
-                )
-
-            # Handle legacy cases where status might not be set yet
-            if not content_status:
-                # If content exists but status is empty, assume it's completed (legacy)
-                if (
-                    current_lesson_content.content
-                    and isinstance(current_lesson_content.content, dict)
-                    and "exposition" in current_lesson_content.content
-                ):
-
-                    content_status = LessonContent.StatusChoices.COMPLETED
-                    logger.info(
-                        "Lesson content %s has no status, assuming COMPLETED (legacy).",
-                        current_lesson_content.pk,
-                    )
-                    # Optionally save the status back if you want to fix legacy data here
-                    # lesson_content.status = LessonContentStatus.COMPLETED
-                    # lesson_content.save(update_fields=['status'])
-                else:
-                    # If content exists but is invalid/empty and no status, mark as PENDING.
-                    content_status = LessonContent.StatusChoices.PENDING
-                    logger.warning(
-                        "Lesson content %s has no status and invalid content, setting to PENDING.",
-                        current_lesson_content.pk,
-                    )
-                    # Optionally save status back
-                    # lesson_content.status = LessonContentStatus.PENDING
-                    # lesson_content.save(update_fields=['status'])
-        else:
-            # If no LessonContent record exists, it's PENDING generation
-            content_status = LessonContent.StatusChoices.PENDING
-            logger.info(
-                "No LessonContent found for lesson %s, status is PENDING.", lesson.pk
-            )
-            # If status is PENDING, trigger generation
-            if content_status == LessonContent.StatusChoices.PENDING:
-                logger.info(
-                    f"Lesson content for lesson {lesson.pk} is PENDING. Triggering generation."
-                )
-                # Create a task to generate content in the background
-                user_obj = cast(AuthUserType, request.user)
-                task, created = AITask.objects.get_or_create(
-                    lesson=lesson,
-                    task_type=AITask.TaskType.LESSON_CONTENT,
-                    status__in=[
-                        AITask.TaskStatus.PENDING,
-                        AITask.TaskStatus.PROCESSING,
-                    ],
-                    defaults={
-                        "input_data": {"lesson_id": str(lesson.pk)},
-                        "user": user_obj,
-                    },
-                )
-
-                if created:
-                    process_ai_task(str(task.task_id))
-                    messages.info(request, "Generating lesson content...")
-                    content_status = (
-                        LessonContent.StatusChoices.GENERATING
-                    )  # Update status for display
-                else:
-                    # Task already exists and is pending/processing
-                    messages.info(
-                        request, "Lesson content generation is already in progress..."
-                    )
-                    content_status = task.status  # Reflect the actual task status
 
         # --- Extract Exposition Content (defensively handle malformed content) ---
         exposition_content_value: Optional[str] = None

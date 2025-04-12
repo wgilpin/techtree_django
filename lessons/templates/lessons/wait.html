@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}Preparing Lesson - TechTree{% endblock %}
+
+{% block content %}
+<body data-poll-url="">
+<div class="container mt-5 text-center">
+    <div class="spinner-border text-primary" role="status" style="width: 4rem; height: 4rem;">
+        <span class="visually-hidden">Loading...</span>
+    </div>
+    <h2 class="mt-4">Please wait while your lesson is being prepared...</h2>
+    <p>This may take a moment. This page will automatically update when your lesson is ready.</p>
+    <div id="wait-error" class="alert alert-danger d-none mt-3"></div>
+</div>
+</body>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    const pollUrl = "{% url 'lessons:poll_lesson_ready' syllabus_id module_index lesson_index %}";
+    const redirectUrl = "{% url 'lessons:lesson_detail' syllabus_id module_index lesson_index %}";
+    const redirectDelay = 1500; // ms between polls
+
+    function pollStatus() {
+        fetch(pollUrl, { credentials: "same-origin" })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === "COMPLETED" || data.status === "completed") {
+                    window.location.href = redirectUrl;
+                } else if (data.status === "FAILED" || data.status === "failed") {
+                    showError("Lesson content generation failed. Please try again.");
+                } else {
+                    setTimeout(pollStatus, redirectDelay);
+                }
+            })
+            .catch(() => {
+                showError("Error checking lesson status. Retrying...");
+                setTimeout(pollStatus, 3000);
+            });
+    }
+
+    function showError(msg) {
+        const errorDiv = document.getElementById("wait-error");
+        errorDiv.textContent = msg;
+        errorDiv.classList.remove("d-none");
+    }
+
+    document.addEventListener("DOMContentLoaded", pollStatus);
+})();
+</script>
+{% endblock %}
