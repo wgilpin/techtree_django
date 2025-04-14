@@ -6,7 +6,11 @@ from typing import Any, Dict, List, cast, Optional
 from langgraph.graph import StateGraph, END
 
 from .state import LessonState
-from . import nodes # Import our ported nodes
+from .classify_intent import classify_intent
+from .chat import generate_chat_response
+from .exercise import generate_new_exercise
+from .evaluation import evaluate_answer
+from .assessment import generate_new_assessment
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +42,12 @@ class LessonInteractionGraph:
         """Defines the structure (nodes and edges) of the lesson interaction graph."""
         workflow = StateGraph(LessonState)
 
-        # Add nodes using the imported functions from nodes.py
-        workflow.add_node("classify_intent", nodes.classify_intent)
-        workflow.add_node("generate_chat_response", nodes.generate_chat_response)
-        workflow.add_node("generate_new_exercise", nodes.generate_new_exercise)
-        workflow.add_node("evaluate_answer", nodes.evaluate_answer)
-        workflow.add_node("generate_new_assessment", nodes.generate_new_assessment)
+        # Add nodes using the imported functions from the new modules
+        workflow.add_node("classify_intent", classify_intent)
+        workflow.add_node("generate_chat_response", generate_chat_response)
+        workflow.add_node("generate_new_exercise", generate_new_exercise)
+        workflow.add_node("evaluate_answer", evaluate_answer)
+        workflow.add_node("generate_new_assessment", generate_new_assessment)
         # Entry point for a chat turn
         workflow.set_entry_point("classify_intent")
 

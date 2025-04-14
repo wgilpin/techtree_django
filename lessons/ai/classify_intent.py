@@ -3,9 +3,6 @@
 import logging
 from typing import Any, Dict, List, Optional, TypedDict, cast
 
-from django.conf import settings
-from langchain_google_genai import ChatGoogleGenerativeAI
-
 from .prompts import INTENT_CLASSIFICATION_PROMPT
 from .state import LessonState
 
@@ -124,14 +121,18 @@ def classify_intent(state: LessonState) -> LessonState:
     active_assessment = updated_state.get("active_assessment")
     active_task_context = "None"
     if active_exercise and isinstance(active_exercise, dict):
-        active_task_context = active_exercise.get("question", "Active exercise exists, but question text is missing.")
+        active_task_context = active_exercise.get(
+            "question", "Active exercise exists, but question text is missing."
+        )
     elif active_assessment and isinstance(active_assessment, dict):
-        active_task_context = active_assessment.get("question", "Active assessment exists, but question text is missing.")
+        active_task_context = active_assessment.get(
+            "question", "Active assessment exists, but question text is missing."
+        )
 
     # Call LLM
     intent_classification: Optional[IntentClassificationResult] = None
-    #llm = _get_llm(temperature=0.1) #moved to nodes.py
-    llm = None #moved to nodes.py
+    # llm = _get_llm(temperature=0.1) #moved to nodes.py
+    llm = None  # moved to nodes.py
     if not llm:
         updated_state["current_interaction_mode"] = "chatting"
         updated_state["error_message"] = "LLM unavailable for intent classification."
@@ -152,10 +153,11 @@ def classify_intent(state: LessonState) -> LessonState:
 
         try:
             # Use robust parser
-            #parsed_result = _parse_llm_json_response(response) #moved to nodes.py
-            parsed_result = None #moved to nodes.py
-            if parsed_result and "intent" in parsed_result:
-                intent_classification = cast(IntentClassificationResult, parsed_result)
+            # parsed_result = _parse_llm_json_response(response) #moved to nodes.py
+            parsed_result = None  # moved to nodes.py
+            if isinstance(parsed_result, dict):
+                if "intent" in parsed_result:  # pylint: disable=unsupported-membership-test
+                    intent_classification = cast(IntentClassificationResult, parsed_result)
                 logger.info("LLM intent response parsed: %s", intent_classification)
             else:
                 logger.warning(
@@ -163,7 +165,9 @@ def classify_intent(state: LessonState) -> LessonState:
                     response.content if hasattr(response, "content") else response,
                 )
                 updated_state["error_message"] = "LLM returned invalid intent format."
+                intent_classification = None
         except Exception as parse_err:  # Catch any parsing error
+            intent_classification = None
             logger.error(
                 f"Failed during intent JSON processing: {parse_err}", exc_info=True
             )
@@ -181,14 +185,11 @@ def classify_intent(state: LessonState) -> LessonState:
         return updated_state
 
     # Update State based on classification
-    if intent_classification and intent_classification.get("intent"):
-        classified_intent = intent_classification["intent"].lower()
+    if isinstance(intent_classification, dict) and intent_classification.get("intent"):
+        classified_intent = intent_classification["intent"].lower()  # type: ignore[index]
         logger.info(f"Classified intent for user {user_id}: {classified_intent}")
-        interaction_mode = _map_intent_to_mode(
-            classified_intent, updated_state
-        )  # Pass state for context
+        interaction_mode = _map_intent_to_mode(classified_intent, updated_state)
         updated_state["current_interaction_mode"] = interaction_mode
-        # Store potential answer only if mode is submit_answer
         updated_state["potential_answer"] = (
             user_message_str if interaction_mode == "submit_answer" else None
         )
@@ -198,7 +199,7 @@ def classify_intent(state: LessonState) -> LessonState:
         )
         updated_state["current_interaction_mode"] = "chatting"
         updated_state["potential_answer"] = None
-        if not updated_state.get("error_message"):  # Avoid overwriting parsing error
+        if not updated_state.get("error_message"):
             updated_state["error_message"] = "Intent classification failed."
 
     # user_message is not part of the state to be returned
