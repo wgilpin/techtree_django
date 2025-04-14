@@ -24,12 +24,14 @@
     {# --- Link to Change Difficulty --- #}
     {% if syllabus.level != 'beginner' %}
         <div class="mb-3 mt-2">
-            <a href="#"
-               id="change-difficulty-btn" {# Use ID for JS targeting #}
+            <button
+               type="button"
                class="btn btn-sm btn-outline-secondary change-difficulty-link"
-               data-url="{% url 'lessons:change_difficulty' syllabus.pk %}">
+               hx-post="{% url 'lessons:change_difficulty' syllabus.pk %}"
+               hx-indicator="#loading-overlay"
+               hx-confirm="Are you sure you want to switch to a lower difficulty level? This will generate a new syllabus.">
                 <i class="fas fa-arrow-down"></i> Switch to Lower Difficulty
-            </a>
+            </button>
         </div>
     {% endif %}
 
@@ -45,7 +47,10 @@
     <div class="row">
         <div class="col-md-8">
             <h2>Lesson Content</h2>
-            <div id="lesson-content-area" class="mb-4 p-3 border rounded bg-light" data-content-status="{{ content_status }}">
+            <div id="lesson-content-area"
+                 class="mb-4 p-3 border rounded bg-light"
+                 data-content-status="{{ content_status }}"
+                 hx-ws="connect:/ws/lesson/{{ lesson.pk }}/content/">
                 {% if exposition_content is not None %}
                     {{ exposition_content|markdownify }} {# Render existing content #}
                 {% else %}
@@ -71,6 +76,15 @@
                     {% endif %}
                 {% endif %}
             </div>
+            {# Trigger content generation on load if needed #}
+            {% if exposition_content is None and content_status != LessonContentStatus.GENERATING %}
+                <div
+                    hx-post="{% url 'lessons:generate_lesson_content' syllabus.pk module.module_index lesson.lesson_index %}"
+                    hx-trigger="load"
+                    hx-swap="none"
+                    hx-headers="{&quot;X-CSRFToken&quot;: &quot;{{ csrf_token }}&quot;}" >
+                </div>
+            {% endif %}
 
             {% if trigger_regeneration %}
             <script>
@@ -106,7 +120,10 @@
             <div id="chat-section-container" {% if exposition_content is None %}style="display: none;"{% endif %}>
                 <h2>Interactive Chat / Exercises</h2>
                 {# Removed escapejs filter, rely on standard HTML attribute escaping #}
-                <div id="lesson-interaction-area" class="mb-4" data-lesson-state="{{ lesson_state_json }}">
+                <div id="lesson-interaction-area"
+                     class="mb-4"
+                     data-lesson-state="{{ lesson_state_json }}"
+                     hx-ws="connect:/ws/lesson/{{ lesson.pk }}/chat/">
                 <div id="active-task-area" class="mb-3 p-3 border rounded bg-warning-light">
                     <!-- Active exercise/assessment will be displayed here -->
                 </div>
@@ -127,13 +144,24 @@
                         <p class="text-center text-muted">No conversation history yet.</p> {# Keep placeholder #}
                     {% endif %}
                 </div>
-                <form id="chat-form">
+                <form hx-ws="send" hx-on::ws-after-send="document.querySelector('input[name=\\'user-message\\']').value = '';">
                     {% csrf_token %}
                     <div class="input-group">
-                        <input type="text" id="user-message" class="form-control" placeholder="Type your message or answer here...">
+                        <input type="text" name="user-message" class="form-control" placeholder="Type your message or answer here...">
                         <button type="submit" class="btn btn-primary">Send</button>
                     </div>
+                    <script>
+                        document.querySelector('form[hx-ws="send"]').addEventListener('submit', function() {
+                            setTimeout(function() {
+                                document.querySelector('input[name="user-message"]').value = '';
+                            }, 100); // Delay clearing by 100 milliseconds
+                        });
+                    </script>
                 </form>
+                <script hx-trigger="load">
+                    var chatHistory = document.getElementById("chat-history");
+                    chatHistory.scrollTop = chatHistory.scrollHeight;
+                </script>
                  {# TODO: Add JS for handling chat form submission (AJAX) #}
                 </div>
             </div>
@@ -184,6 +212,7 @@
 
 {% block extra_js %}
 <script>
+console.log("Chat JS loaded");
 // Function to render KaTeX math
 // Function to render KaTeX math within a specific element or the whole body
 function renderMath(targetElement = document.body) { // Default to document.body
@@ -196,392 +225,14 @@ function renderMath(targetElement = document.body) { // Default to document.body
     }
 }
 
-document.addEventListener('DOMContentLoaded', function() {
-    // --- Change Difficulty AJAX Handling ---
-    const changeDifficultyBtn = document.getElementById('change-difficulty-btn');
-    const loadingOverlay = document.getElementById('loading-overlay');
-
-    if (changeDifficultyBtn && loadingOverlay) { // Check if both elements exist
-        changeDifficultyBtn.addEventListener('click', function(e) {
-            e.preventDefault();
-
-            if (confirm('Are you sure you want to switch to a lower difficulty level? This will generate a new syllabus.')) {
-                // Show loading overlay
-                loadingOverlay.style.display = 'flex';
-
-                // Get the URL from the data attribute
-                const url = this.dataset.url;
-
-                // Make AJAX request
-                fetch(url, {
-                    method: 'GET',
-                    headers: {
-                        'X-Requested-With': 'XMLHttpRequest',
-                        'X-CSRFToken': csrfToken // Include CSRF token for safety, even on GET if needed by middleware
-                    }
-                })
-                .then(response => {
-                    // Check if response is JSON before parsing
-                    const contentType = response.headers.get("content-type");
-                    if (contentType && contentType.indexOf("application/json") !== -1) {
-                        return response.json().then(data => ({ ok: response.ok, status: response.status, body: data }));
-                    } else {
-                        // Handle non-JSON responses (like HTML error pages)
-                        return response.text().then(text => {
-                             throw new Error(`Received non-JSON response (Status: ${response.status}): ${text.substring(0, 100)}...`);
-                        });
-                    }
-                })
-                .then(result => {
-                    if (result.ok && result.body.success) {
-                        // Redirect to the new syllabus
-                        window.location.href = result.body.redirect_url;
-                    } else {
-                        // Hide loading overlay
-                        loadingOverlay.style.display = 'none';
-                        // Show error from JSON or a generic one
-                        const errorMsg = result.body.error || `Request failed with status ${result.status}`;
-                        console.error('Difficulty change error:', errorMsg);
-                        alert('Error: ' + errorMsg);
-                    }
-                })
-                .catch(error => {
-                    // Hide loading overlay
-                    loadingOverlay.style.display = 'none';
-                    console.error('Error during difficulty change fetch:', error);
-                    alert('An error occurred while changing difficulty: ' + error.message + '. Please try again.');
-                });
-            }
-        });
+document.body.addEventListener('htmx:afterSwap', function(evt) {
+    // Only re-render math in relevant swapped areas
+    if (evt.detail && evt.detail.target && (
+        evt.detail.target.id === 'lesson-content-area' ||
+        evt.detail.target.id === 'chat-history'
+    )) {
+        renderMath(evt.detail.target);
     }
-    // --- End Change Difficulty ---
-
-    const interactionArea = document.getElementById('lesson-interaction-area');
-    const chatForm = document.getElementById('chat-form');
-    const userMessageInput = document.getElementById('user-message');
-    const chatHistory = document.getElementById('chat-history');
-    const activeTaskArea = document.getElementById('active-task-area');
-    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
-    const lessonContentArea = document.getElementById('lesson-content-area');
-    const loadingMessage = document.getElementById('loading-message');
-    const chatSectionContainer = document.getElementById('chat-section-container'); // Get reference to the new container
-    let currentLessonState = {}; // Store parsed state
-
-    // --- Parse Initial Lesson State ---
-    try {
-        const stateJson = interactionArea.dataset.lessonState;
-        if (stateJson) {
-            currentLessonState = JSON.parse(stateJson);
-            console.log("Initial Lesson State:", currentLessonState); // For debugging
-        }
-    } catch (e) {
-        console.error("Error parsing lesson state JSON:", e);
-        appendMessage('system', 'Error: Could not load lesson state.'); // Keep this for state parsing errors
-    }
-
-    // --- Function to Display Active Task ---
-    function displayActiveTask(task) {
-        activeTaskArea.innerHTML = ''; // Clear previous task
-        if (!task) {
-            activeTaskArea.style.display = 'none'; // Hide if no task
-            return;
-        }
-
-        activeTaskArea.style.display = 'block'; // Show if task exists
-        const taskType = currentLessonState.active_exercise ? 'Exercise' : 'Assessment';
-        const prompt = task.prompt || task.question || "No prompt provided."; // Adapt based on actual state structure
-
-        const taskDiv = document.createElement('div');
-        taskDiv.innerHTML = `
-            <h5>${taskType}</h5>
-            <p>${prompt}</p>
-            <small class="text-muted">Enter your answer below and press Send.</small>
-        `;
-        activeTaskArea.appendChild(taskDiv);
-        // Adjust placeholder text based on context
-        userMessageInput.placeholder = `Enter your answer for the ${taskType.toLowerCase()}...`;
-
-
-    // --- Scroll Chat History to Bottom on Load ---
-    if (chatHistory.children.length > 1 || (chatHistory.children.length === 1 && !chatHistory.querySelector('p.text-center.text-muted'))) {
-        // Scroll down if there are messages, excluding the 'No history' placeholder
-        chatHistory.scrollTop = chatHistory.scrollHeight;
-        console.log("Scrolled chat history to bottom on initial load.");
-    }
-    }
-
-    // --- Initial Task Display ---
-    displayActiveTask(currentLessonState.active_exercise || currentLessonState.active_assessment);
-
-    const initialStatus = lessonContentArea.dataset.contentStatus;
-    console.log('Initial lesson content status:', initialStatus);
-
-    if (initialStatus === 'COMPLETED') {
-        renderMath(document.body);
-    } else if (initialStatus === 'GENERATING') {
-        console.log('Lesson content is generating, starting polling...');
-        startPollingForContent();
-    } else if (initialStatus === 'FAILED' || initialStatus === 'ERROR') {
-        lessonContentArea.innerHTML = `
-            <div class="alert alert-danger" role="alert">
-                <strong>Error loading lesson content:</strong> Generation failed. Please try refreshing or contact support.
-            </div>`;
-        if (loadingMessage) loadingMessage.style.display = 'none';
-        if (chatSectionContainer) chatSectionContainer.style.display = 'block';
-    } else {
-        console.log('Lesson content status is PENDING or NOT_FOUND, triggering generation...');
-        triggerContentGeneration();
-    }
-
-    function triggerContentGeneration() {
-        const contentUrl = window.location.pathname + 'generate_content/';
-        fetch(contentUrl, {
-            method: 'POST',
-            headers: {
-                'X-CSRFToken': csrfToken,
-                'X-Requested-With': 'XMLHttpRequest',
-                'Content-Type': 'application/json'
-            }
-        })
-        .then(response => {
-            if (!response.ok) {
-                return response.json().then(err => { throw new Error(err.error || `HTTP error ${response.status}`); });
-            }
-            return response.json();
-        })
-        .then(data => {
-            if (loadingMessage) loadingMessage.style.display = 'none';
-            if (chatSectionContainer) chatSectionContainer.style.display = 'block';
-            if (data.status === 'success' && data.html_content) {
-                lessonContentArea.innerHTML = data.html_content;
-                renderMath(lessonContentArea);
-            } else {
-                const errorMessage = data.error || "Content generation failed or returned invalid data.";
-                lessonContentArea.innerHTML = `
-                    <div class="alert alert-danger" role="alert">
-                        <strong>Error loading lesson content:</strong> ${errorMessage}
-                    </div>`;
-            }
-        })
-        .catch(error => {
-            if (loadingMessage) loadingMessage.style.display = 'none';
-            if (chatSectionContainer) chatSectionContainer.style.display = 'block';
-            lessonContentArea.innerHTML = `
-                <div class="alert alert-danger" role="alert">
-                    <strong>Error loading lesson content:</strong> ${error.message}
-                </div>`;
-        });
-    }
-
-    function startPollingForContent() {
-        const statusUrl = window.location.pathname + 'check_content_status/';
-        let attempts = 0;
-        const maxAttempts = 20;
-        const pollInterval = 3000; // 3 seconds
-
-        function poll() {
-            attempts++;
-            console.log(`Polling attempt ${attempts}...`);
-            fetch(statusUrl, {
-                method: 'GET',
-                headers: {
-                    'X-Requested-With': 'XMLHttpRequest'
-                }
-            })
-            .then(response => response.json())
-            .then(data => {
-                console.log('Poll response:', data);
-                if (data.status === 'COMPLETED' && data.html_content) {
-                    lessonContentArea.innerHTML = data.html_content;
-                    renderMath(lessonContentArea);
-                    if (loadingMessage) loadingMessage.style.display = 'none';
-                    if (chatSectionContainer) chatSectionContainer.style.display = 'block';
-                } else if (data.status === 'FAILED' || data.status === 'ERROR') {
-                    lessonContentArea.innerHTML = `
-                        <div class="alert alert-danger" role="alert">
-                            <strong>Error loading lesson content:</strong> ${data.error || 'Generation failed.'}
-                        </div>`;
-                    if (loadingMessage) loadingMessage.style.display = 'none';
-                    if (chatSectionContainer) chatSectionContainer.style.display = 'block';
-                } else if (data.status === 'GENERATING') {
-                    if (attempts < maxAttempts) {
-                        setTimeout(poll, pollInterval);
-                    } else {
-                        lessonContentArea.innerHTML = `
-                            <div class="alert alert-warning" role="alert">
-                                Lesson generation is taking longer than expected. Please try refreshing the page or try again later.
-                            </div>`;
-                        if (loadingMessage) loadingMessage.style.display = 'none';
-                        if (chatSectionContainer) chatSectionContainer.style.display = 'block';
-                    }
-                } else {
-                    // Unexpected status, stop polling
-                    lessonContentArea.innerHTML = `
-                        <div class="alert alert-danger" role="alert">
-                            <strong>Error loading lesson content:</strong> Unexpected status: ${data.status}
-                        </div>`;
-                    if (loadingMessage) loadingMessage.style.display = 'none';
-                    if (chatSectionContainer) chatSectionContainer.style.display = 'block';
-                }
-            })
-            .catch(error => {
-                console.error('Polling error:', error);
-                lessonContentArea.innerHTML = `
-                    <div class="alert alert-danger" role="alert">
-                        <strong>Error loading lesson content:</strong> ${error.message}
-                    </div>`;
-                if (loadingMessage) loadingMessage.style.display = 'none';
-                if (chatSectionContainer) chatSectionContainer.style.display = 'block';
-            });
-        }
-
-        poll();
-    }
-
-    // Function to append a message to the chat history with bubble styling
-    // Function to append a message to the chat history with bubble styling
-    function appendMessage(sender, messageContent) {
-        const messageContainer = document.createElement('div');
-        messageContainer.classList.add('message-container');
-
-        const bubbleDiv = document.createElement('div');
-        bubbleDiv.classList.add('chat-bubble');
-        // Assistant messages might contain HTML from markdown, user messages are treated as text for now
-        // Server should sanitize assistant messages.
-        bubbleDiv.innerHTML = messageContent; // Assumes messageContent is safe HTML or plain text
-
-        if (sender === 'user') {
-            messageContainer.classList.add('user-message');
-        } else { // Assuming 'assistant' or 'system'
-            messageContainer.classList.add('assistant-message');
-            // Add the robot icon for assistant messages
-            const icon = document.createElement('i');
-            icon.className = 'fas fa-robot assistant-icon'; // Assuming Font Awesome
-            messageContainer.appendChild(icon);
-        }
-
-        messageContainer.appendChild(bubbleDiv);
-        chatHistory.appendChild(messageContainer);
-
-        // Render math within the entire chat history after adding the new bubble
-        renderMath(document.body); // Re-render the whole body
-
-        // Scroll to the bottom
-        chatHistory.scrollTop = chatHistory.scrollHeight;
-    }
-
-    // Remove the placeholder 'No conversation history yet.' if it exists
-    const noHistoryP = chatHistory.querySelector('p');
-    if (noHistoryP && noHistoryP.textContent.includes('No conversation history yet.')) {
-        // We only remove it if there's actual history already, 
-        // otherwise, we remove it before adding the first message.
-        // Let's refine this: remove it when the *first* message is added by JS.
-    }
-
-    // --- Event Delegation for Chat Form Submission ---
-    chatSectionContainer.addEventListener('submit', function(event) {
-        // Check if the submitted element is the chat form
-        if (event.target.id === 'chat-form') {
-            console.log('Chat form submit event triggered via delegation.'); // Debug log
-            event.preventDefault(); // Prevent default form submission
-            console.log('Default form submission prevented.'); // Debug log
-
-            const userMessage = userMessageInput.value.trim();
-            if (!userMessage) {
-                return; // Don't send empty messages
-            }
-
-            const isActiveTask = !!(currentLessonState.active_exercise || currentLessonState.active_assessment);
-            const submissionType = isActiveTask ? 'answer' : 'chat';
-
-            // Append user message immediately (optimistic update)
-            appendMessage('user', userMessage + (isActiveTask ? ' (Answer)' : '')); // Indicate if it's an answer
-
-            // Clear the input field
-            userMessageInput.value = ''; // Clear input
-            userMessageInput.placeholder = "Type your message or answer here..."; // Reset placeholder
-
-            // Remove 'No history' placeholder if it's still there
-            const currentNoHistoryP = chatHistory.querySelector('p');
-            if (currentNoHistoryP && currentNoHistoryP.textContent.includes('No conversation history yet.')) {
-                currentNoHistoryP.remove();
-            }
-
-            // Send message to the server
-            fetch(window.location.pathname + 'interact/', { // Post to the interaction URL
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': csrfToken,
-                    'X-Requested-With': 'XMLHttpRequest' // Standard header for AJAX requests
-                },
-                body: JSON.stringify({
-                    message: userMessage,
-                    submission_type: submissionType // Indicate if it's chat or answer
-                })
-            })
-            .then(response => {
-                if (!response.ok) {
-                    // Attempt to get error details from response body
-                    return response.json().then(err => {
-                        throw new Error(err.error || `HTTP error! status: ${response.status}`);
-                    }).catch(() => {
-                        // Fallback if response body is not JSON or empty
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    });
-                }
-                return response.json();
-            })
-            .then(data => {
-                // Update state based on response (important!)
-                if (data.lesson_state) {
-                     try {
-                        currentLessonState = data.lesson_state; // Update local state
-                        console.log("Updated Lesson State:", currentLessonState); // Debugging
-                        // Re-render the active task based on the new state
-                        displayActiveTask(currentLessonState.active_exercise || currentLessonState.active_assessment);
-                     } catch (e) {
-                         console.error("Error processing updated lesson state:", e);
-                         appendMessage('system', 'Error: Could not process state update from server.');
-                     }
-                } else {
-                     console.warn("No lesson_state received in response. State might be stale.");
-                }
-
-                // Display assistant message if provided
-                if (data.assistant_message) {
-                    appendMessage('assistant', data.assistant_message);
-                } else if (!data.error) { // Don't log error if server already sent one
-                    console.warn('Assistant message missing in response, but no error reported:', data);
-                    // Don't display an error here, maybe the action didn't warrant a message (e.g., just state update)
-                }
-
-                // Handle potential errors returned in the JSON response body
-                if (data.error) {
-                    console.error('Server returned error:', data.error);
-                    appendMessage('system', `Error: ${data.error}`);
-                    // Potentially restore user input?
-                    // userMessageInput.value = userMessage;
-                }
-            })
-            .catch(error => {
-                console.error('Error sending chat message:', error);
-                // Display error in chat history
-                appendMessage('system', `Error: Could not send message. ${error.message}`);
-                // Optionally, restore the user's message in the input field
-                // userMessageInput.value = userMessage;
-            });
-        } // End if (event.target.id === 'chat-form')
-    });
 });
 
-    // Add a light background style for the task area (optional)
-    const style = document.createElement('style');
-    style.textContent = `
-        .bg-warning-light { background-color: #fff3cd; } /* Light yellow */
-    `;
-    document.head.appendChild(style);
-
-</script>
-{# Removed comment about separate JS file as logic is now inline #}
 {% endblock %}

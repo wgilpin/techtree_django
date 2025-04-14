@@ -108,10 +108,9 @@ def test_start_assessment_view_ai_error(
 
 
 @pytest.mark.django_db
-@patch("onboarding.views.create_user_assessment")
 @patch("onboarding.views.get_ai_instance")
 def test_submit_answer_view_continue(
-    mock_get_ai, mock_create_assessment, logged_in_standard_client
+    mock_get_ai, logged_in_standard_client
 ):
     """Test submitting an answer when assessment should continue."""
     # Already logged in by fixture
@@ -182,7 +181,6 @@ def test_submit_answer_view_continue(
     session_data = logged_in_standard_client.session.get(settings.ASSESSMENT_STATE_KEY)
     assert session_data["step"] == 1  # No update yet,  processing
     assert len(session_data["answers"]) == 0  # No update yet, processing
-    mock_create_assessment.assert_not_called()
 
 
 

@@ -218,7 +218,7 @@ def classify_intent(state: LessonState) -> LessonState:
     updated_state["error_message"] = None  # Clear previous error
     updated_state["potential_answer"] = None  # Clear previous potential answer
 
-    user_message = updated_state.get("user_message")
+    user_message = updated_state.get("last_user_message")
     user_id: Optional[str] = updated_state.get("user_id")
     # Ensure user_message is treated as Optional[str]
     user_message_str: Optional[str] = (
@@ -260,7 +260,14 @@ def classify_intent(state: LessonState) -> LessonState:
     lesson_title: str = updated_state.get("lesson_title", "Unknown Lesson")
     user_level: str = updated_state.get("user_knowledge_level", "beginner")
     exposition_summary: str = updated_state.get("lesson_exposition", "")[:500]
-    active_task_context = "None"  # Already handled above
+    # Determine active task context dynamically
+    active_exercise = updated_state.get("active_exercise")
+    active_assessment = updated_state.get("active_assessment")
+    active_task_context = "None"
+    if active_exercise and isinstance(active_exercise, dict):
+        active_task_context = active_exercise.get("question", "Active exercise exists, but question text is missing.")
+    elif active_assessment and isinstance(active_assessment, dict):
+        active_task_context = active_assessment.get("question", "Active assessment exists, but question text is missing.")
 
     # Call LLM
     intent_classification: Optional[IntentClassificationResult] = None

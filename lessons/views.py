@@ -36,7 +36,6 @@ logger = logging.getLogger(__name__)
 # Type alias for auth user to avoid mypy errors
 AuthUserType = Any  # Replace with actual type when available
 
-from django.views.decorators.csrf import csrf_exempt
 
 @require_GET
 @login_required
@@ -56,6 +55,7 @@ def lesson_wait(
         },
     )
 
+
 @require_GET
 @login_required
 def poll_lesson_ready(
@@ -73,15 +73,22 @@ def poll_lesson_ready(
             lesson_index=lesson_index,
         )
         lesson_content = LessonContent.objects.filter(lesson=lesson).first()
-        if lesson_content and lesson_content.status == LessonContent.StatusChoices.COMPLETED:
+        if (
+            lesson_content
+            and lesson_content.status == LessonContent.StatusChoices.COMPLETED
+        ):
             return JsonResponse({"status": "COMPLETED"})
-        elif lesson_content and lesson_content.status == LessonContent.StatusChoices.FAILED:
+        elif (
+            lesson_content
+            and lesson_content.status == LessonContent.StatusChoices.FAILED
+        ):
             return JsonResponse({"status": "FAILED"})
         else:
             return JsonResponse({"status": "GENERATING"})
     except Exception as e:
         logger.error(f"Error in poll_lesson_ready: {e}", exc_info=True)
         return JsonResponse({"status": "ERROR", "error": str(e)}, status=500)
+
 
 def clean_exposition_string(text: Optional[str]) -> Optional[str]:
     """Decodes unicode escapes and fixes specific known issues in exposition text."""
@@ -185,8 +192,6 @@ def lesson_detail(
             )  # Get status from the model field
         else:
             # No content exists: create a LessonContent record and trigger generation
-            from taskqueue.models import AITask
-            from taskqueue.tasks import process_ai_task
 
             current_lesson_content = LessonContent.objects.create(
                 lesson=lesson,
@@ -410,7 +415,8 @@ def lesson_detail(
         )
 
         class Dummy:
-            """ dummy class so pk field is present """
+            """dummy class so pk field is present"""
+
             def __init__(self, pk):
                 self.pk = pk
                 self.module_index = 0
@@ -571,7 +577,7 @@ def generate_lesson_content(
             lesson=lesson,
         )
 
-        # Process the task 
+        # Process the task
         process_ai_task(str(task.task_id))
 
         # Return a success response with the task ID for polling
@@ -640,6 +646,71 @@ def check_lesson_content_status(
         return JsonResponse({"error": str(e)}, status=500)
 
 
+@require_GET
+@login_required
+def check_interaction_status(
+    request: HttpRequest,
+    syllabus_id: str,
+    module_index: int,
+    lesson_index: int,
+) -> JsonResponse:
+    """
+    Poll the status of a lesson interaction (chat/answer) by task_id.
+    Returns assistant message and lesson state if ready.
+    Always returns JSON, even on error.
+    """
+
+    task_id = request.GET.get("task_id")
+    if not task_id:
+        return JsonResponse({"status": "error", "error": "Missing task_id"}, status=400)
+    try:
+        task = AITask.objects.get(pk=task_id)
+    except Exception as e:
+        # Always return JSON, never HTML
+        return JsonResponse(
+            {"status": "error", "error": f"Task not found: {str(e)}"}, status=200
+        )
+
+    # Get progress_id from task
+    progress_id = task.input_data.get("progress_id")
+    if not progress_id:
+        return JsonResponse(
+            {"status": "error", "error": "No progress_id in task"}, status=500
+        )
+    try:
+        progress = UserProgress.objects.get(pk=progress_id)
+    except UserProgress.DoesNotExist:
+        return JsonResponse(
+            {"status": "error", "error": "Progress not found"}, status=404
+        )
+
+    # Get the latest assistant message for this progress
+    assistant_message = (
+        ConversationHistory.objects.filter(progress=progress, role="assistant")
+        .order_by("-timestamp")
+        .first()
+    )
+    assistant_content = assistant_message.content if assistant_message else None
+
+    # If no assistant message yet, keep polling (pending)
+    if not assistant_message:
+        # Optionally, check if the task failed
+        if task.status == AITask.TaskStatus.FAILED:
+            # Defensive: some AITask models may not have an 'error' field
+            error_msg = getattr(task, "error", None) or "Task failed"
+            return JsonResponse({"status": "failed", "error": error_msg})
+        return JsonResponse({"status": "pending"})
+
+    # Return lesson state and assistant message
+    return JsonResponse(
+        {
+            "status": "completed",
+            "assistant_message": assistant_content,
+            "lesson_state": progress.lesson_state_json,
+        }
+    )
+
+
 @require_GET  # Use GET as it's triggered by a link click
 @login_required  # type: ignore
 def change_difficulty_view(request: HttpRequest, syllabus_id: str) -> HttpResponse:
@@ -656,6 +727,11 @@ def change_difficulty_view(request: HttpRequest, syllabus_id: str) -> HttpRespon
         valid_difficulties = ["beginner", "intermediate", "advanced"]
         if difficulty not in valid_difficulties:
             messages.error(request, f"Invalid difficulty: {difficulty}")
+            if hasattr(request, "htmx") and request.htmx:
+
+                response = HttpResponse()
+                response["HX-Redirect"] = reverse("syllabus:detail", args=[syllabus_id])
+                return response
             return redirect("syllabus:detail", syllabus_id=syllabus_id)
 
         # Get the original syllabus
@@ -672,6 +748,13 @@ def change_difficulty_view(request: HttpRequest, syllabus_id: str) -> HttpRespon
                 request,
                 f"A {difficulty} syllabus for '{original_syllabus.topic}' already exists.",
             )
+            if hasattr(request, "htmx") and request.htmx:
+
+                response = HttpResponse()
+                response["HX-Redirect"] = reverse(
+                    "syllabus:detail", args=[str(existing_syllabus.pk)]
+                )
+                return response
             return redirect("syllabus:detail", syllabus_id=str(existing_syllabus.pk))
 
         # Otherwise, create a new syllabus with the new difficulty
@@ -687,16 +770,14 @@ def change_difficulty_view(request: HttpRequest, syllabus_id: str) -> HttpRespon
             user=user_obj,
         )
 
-        # If this is an AJAX request, return JSON response
-        if request.headers.get("x-requested-with") == "XMLHttpRequest":
-            return JsonResponse(
-                {
-                    "success": True,
-                    "redirect_url": reverse(
-                        "syllabus:detail", args=[str(new_syllabus_id)]
-                    ),
-                }
+        # If this is an HTMX request, return HX-Redirect header
+        if hasattr(request, "htmx") and request.htmx:
+
+            response = HttpResponse()
+            response["HX-Redirect"] = reverse(
+                "syllabus:detail", args=[str(new_syllabus_id)]
             )
+            return response
 
         # For non-AJAX requests, redirect to the syllabus detail page
         messages.success(

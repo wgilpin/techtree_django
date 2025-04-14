@@ -1,3 +1,4 @@
-[ ] don't show the question box while eaiting for the question to be written
-[ ] improve syllabus prompt - less childlike, explain what the level mean
-[ ] use same loading page every where - the greyed out full screen one like...
+- [ ] don't show the question box while waiting for the question to be written
+- [x] improve syllabus prompt - less childlike, explain what the level mean
+- [ ] use same loading page every where - the greyed out full screen one like...
+- [ ] remove the 3-level structure syllabus-module-lesson. Sequentially numbered lessons belong to a syllabus. Module is only cosmetic.

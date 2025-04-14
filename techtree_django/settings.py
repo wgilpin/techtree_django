@@ -53,6 +53,11 @@ INSTALLED_APPS = [
     "background_task",
     "taskqueue",
 
+    # Third-party apps for async/websockets/htmx
+    "channels",
+    "daphne",
+    "django_htmx",
+
     # Django contrib apps
     "django.contrib.admin",
     "django.contrib.auth",
@@ -66,6 +71,7 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "django_htmx.middleware.HtmxMiddleware",  # HTMX middleware for request.htmx and CSRF
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
@@ -91,6 +97,19 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = "techtree_django.wsgi.application"
+
+# ASGI application for Channels (required for websockets)
+ASGI_APPLICATION = "techtree_django.asgi.application"
+
+# Channels/Redis configuration for websockets
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [("127.0.0.1", 6379)],
+        },
+    },
+}
 
 
 # Database

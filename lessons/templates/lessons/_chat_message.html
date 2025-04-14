@@ -1,0 +1,10 @@
+{% load markdown_extras %}
+{% comment %}Partial for a single chat message in chat history{% endcomment %}
+<div class="message-container {% if message.role == 'user' %}user-message{% else %}assistant-message{% endif %}">
+    {% if message.role != 'user' %}
+        <i class="fas fa-robot assistant-icon"></i>
+    {% endif %}
+    <div class="chat-bubble">
+        {{ message.content|markdownify_chat|safe }}
+    </div>
+</div>

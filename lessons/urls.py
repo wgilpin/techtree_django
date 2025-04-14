@@ -46,4 +46,10 @@ urlpatterns: list[URLPattern] = [
         views.change_difficulty_view,
         name="change_difficulty",
     ),
+    # Polling endpoint for chat/interaction status
+    path(
+        "<uuid:syllabus_id>/module/<int:module_index>/lesson/<int:lesson_index>/check_interaction_status/",
+        views.check_interaction_status,
+        name="check_interaction_status",
+    ),
 ]

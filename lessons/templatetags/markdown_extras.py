@@ -99,7 +99,12 @@ def markdownify(value: str) -> str:
     """
     Converts a Markdown string into HTML.
     Handles fenced code blocks and LaTeX math expressions separately using placeholders.
+    Also preprocesses to ensure markdown lists are recognized by inserting a blank line before any list.
     """
+    def ensure_list_blank_line(md: str) -> str:
+        # Insert a blank line before any line starting with * or - if not already present
+        return re.sub(r'([^\n])(\n[ \t]*[\*\-] )', r'\1\n\2', md)
+    value = ensure_list_blank_line(value)
 
     code_block_placeholders = {}  # Stores {start_placeholder: raw_code_content}
 
@@ -214,7 +219,12 @@ def markdownify_chat(value: str) -> str:
     Converts a Markdown string into HTML suitable for chat messages.
     Handles fenced code blocks and LaTeX math expressions separately using placeholders.
     Includes nl2br extension for chat formatting.
+    Also preprocesses to ensure markdown lists are recognized by inserting a blank line before any list.
     """
+    def ensure_list_blank_line(md: str) -> str:
+        # Insert a blank line before any line starting with * or - if not already present
+        return re.sub(r'([^\n])(\n[ \t]*[\*\-] )', r'\1\n\2', md)
+    value = ensure_list_blank_line(value)
 
     code_block_placeholders = {}  # Stores {start_placeholder: raw_code_content}
 

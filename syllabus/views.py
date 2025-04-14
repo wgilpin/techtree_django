@@ -267,7 +267,7 @@ def syllabus_detail(request: HttpRequest, syllabus_id: str) -> HttpResponse:
         logger.error(f"Error displaying syllabus {syllabus_id}: {e}", exc_info=True)
         logger.error(f"Exception type: {type(e)}")
         # Exception: redirect to onboarding start page
-        return redirect(reverse("onboarding_start", args=[""]))
+        return redirect(reverse("syllabus:landing"))
 
 
 def module_detail(

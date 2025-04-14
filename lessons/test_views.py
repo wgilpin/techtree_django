@@ -191,6 +191,10 @@ class LessonViewsTestCase(TestCase):
         LessonContent.objects.create(
             lesson=lesson_no_expo, content={"other_key": "some value"}
         )
+        # Explicitly set status to COMPLETED to bypass wait page redirect
+        lc_no_expo = LessonContent.objects.get(lesson=lesson_no_expo)
+        lc_no_expo.status = LessonContent.StatusChoices.COMPLETED
+        lc_no_expo.save()
         # Ensure progress exists for this lesson (view fetches it)
         UserProgress.objects.get_or_create(
             user=self.user,
@@ -226,6 +230,10 @@ class LessonViewsTestCase(TestCase):
             module=self.module, lesson_index=2, title="Lesson Bad Format"
         )
         LessonContent.objects.create(lesson=lesson_bad_format, content="just a string")
+        # Explicitly set status to COMPLETED to bypass wait page redirect
+        lc_bad_format = LessonContent.objects.get(lesson=lesson_bad_format)
+        lc_bad_format.status = LessonContent.StatusChoices.COMPLETED
+        lc_bad_format.save()
         # Ensure progress exists for this lesson (view fetches it)
         UserProgress.objects.get_or_create(
             user=self.user,

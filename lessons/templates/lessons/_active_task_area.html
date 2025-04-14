@@ -1,0 +1,22 @@
+<![CDATA[{% load markdown_extras %}
+{% comment %}Partial for the active task/exercise/assessment area in the lesson chat{% endcomment %}
+{% if active_exercise %}
+    <div class="exercise-prompt">
+        <strong>Exercise:</strong>
+        {{ active_exercise|markdownify_chat|safe }}
+    </div>
+{% elif active_assessment %}
+    <div class="assessment-prompt">
+        <strong>Assessment:</strong>
+        {{ active_assessment|markdownify_chat|safe }}
+    </div>
+{% elif task_prompt %}
+    <div class="task-prompt">
+        <strong>Task:</strong>
+        {{ task_prompt|markdownify_chat|safe }}
+    </div>
+{% else %}
+    <div class="no-task">
+        <em>No active task at the moment.</em>
+    </div>
+{% endif %}]]>
