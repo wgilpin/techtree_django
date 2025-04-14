@@ -37,3 +37,4 @@ class LessonState(TypedDict, total=False):
 
     # Error handling
     error_message: Optional[str]
+    syllabus: Optional[Dict[str, Any]]

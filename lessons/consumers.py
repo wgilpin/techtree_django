@@ -33,15 +33,20 @@ class ContentConsumer(AsyncWebsocketConsumer):
         self.group_name = None
 
     async def connect(self):
+        """Called when the websocket is handshaking as part of initial connection."""
         self.lesson_id = self.scope["url_route"]["kwargs"]["lesson_id"]
         self.group_name = f"lesson_content_{self.lesson_id}"
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
 
     async def disconnect(self, _):
+        """Called when the WebSocket closes for any reason."""
         await self.channel_layer.group_discard(self.group_name, self.channel_name)
 
     async def receive(self, text_data=None, bytes_data=None):
+        """Called when we get a text frame. Channels will always decode the value
+        to a text string before calling this method.
+        """
         # No client-initiated messages expected for content updates
         pass
 
@@ -65,12 +70,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
         self.group_name = None
 
     async def connect(self):
+        """Called when the websocket is handshaking as part of initial connection."""
         self.lesson_id = self.scope["url_route"]["kwargs"]["lesson_id"]
         self.group_name = f"lesson_chat_{self.lesson_id}"
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
 
     async def disconnect(self, _):
+        """Called when the WebSocket closes for any reason."""
         await self.channel_layer.group_discard(self.group_name, self.channel_name)
 
     async def receive(self, text_data=None, bytes_data=None):
@@ -137,11 +144,17 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 await self.close()
                 return
 
+            # Save user message
+            user_message_obj = await database_sync_to_async(ConversationHistory.objects.create)(
+                progress=progress, role="user", message_type="chat", content=user_message_content
+            )
+
             # Send user message to channel layer immediately
-            await self.send_user_message(user, lesson, progress, user_message_content)
+            await self.send_user_message(user_message_obj)
+
             # Create and trigger background task
             task = await self.create_ai_task(
-                user, lesson, progress, user_message_content
+                user, lesson, progress, user_message_content, user_message_obj
             )
             await sync_to_async(process_ai_task)(str(task.task_id))  # Wrap sync call for async context
 
@@ -177,14 +190,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             return None
 
     @database_sync_to_async
-    def save_user_message(self, progress, content):
-        """Saves the user's message to ConversationHistory."""
-        ConversationHistory.objects.create(
-            progress=progress, role="user", message_type="chat", content=content
-        )
-
-    @database_sync_to_async
-    def create_ai_task(self, user, lesson, progress, user_message):
+    def create_ai_task(self, user, lesson, progress, user_message, user_message_obj):
         """Creates an AITask for the lesson interaction."""
         user_obj = cast(AuthUserType, user)
         return AITask.objects.create(
@@ -194,20 +200,25 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "lesson_id": str(lesson.pk),
                 "progress_id": str(progress.pk),
                 "submission_type": "chat",  # Explicitly set for chat
+                "user_message_id": str(user_message_obj.message_id),
             },
             user=user_obj,
             lesson=lesson,
         )
 
-    async def send_user_message(self, user, lesson, progress, user_message_content):
+    async def send_user_message(self, user_message_obj):
         """Sends the user's message to the channel layer."""
         from django.template.loader import render_to_string
 
-        user_message = await database_sync_to_async(ConversationHistory.objects.create)(
-            progress=progress, role="user", message_type="chat", content=user_message_content
-        )
-        user_message_html = render_to_string("lessons/_chat_message.html", {"message": user_message})
-        oob_chat_message = f'<div id="chat-history" hx-swap-oob="beforeend">{user_message_html}<script>var chatHistory = document.getElementById("chat-history"); chatHistory.scrollTop = chatHistory.scrollHeight;</script></div>'
+        user_message_html = render_to_string("lessons/_chat_message.html", {"message": user_message_obj})
+        oob_chat_message = f"""
+            <div id="chat-history" hx-swap-oob="beforeend">
+                {user_message_html}
+                <script>
+                    var chatHistory = document.getElementById("chat-history"); 
+                    chatHistory.scrollTop = chatHistory.scrollHeight;
+                </script>
+            </div>"""
 
         # Send OOB update to the group
         await self.channel_layer.group_send(
@@ -254,16 +265,15 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         # Construct Out-of-Band (OOB) swaps for HTMX
         # Combine user and assistant messages for chat history update
-        combined_chat_html = f"{assistant_message_html}"
         scroll_script = (
             '<script>var chatHistory = document.getElementById("chat-history"); '
             "chatHistory.scrollTop = chatHistory.scrollHeight;</script>"
         )
         oob_chat_message = ""
-        if combined_chat_html:
+        if assistant_message_html:
             oob_chat_message = (
                 '<div id="chat-history" hx-swap-oob="beforeend">'
-                f"{combined_chat_html}{scroll_script}</div>"
+                f"{assistant_message_html}{scroll_script}</div>"
             )
         oob_active_task = f'<div id="active-task-area" hx-swap-oob="innerHTML">{active_task_html}</div>'
 

@@ -89,6 +89,7 @@ Keep your responses concise and focused on the lesson topic.
 3. If the user makes a general comment, respond conversationally.
 4. Do not suggest exercises or quizzes unless explicitly asked in the user's last message.
 5. If there is an 'Active Task Context', consider it. If the user's message seems unrelated to the active task, gently guide them back or ask if they want to continue the task.
+6. If the user asks about topics not covered in the current lesson, check the syllabus information to see if those topics will be covered in future lessons. If so, let the user know that the topic will be covered later in the course.
 
 ## Formatting Instructions
 {latex_formatting_instructions}
@@ -96,6 +97,11 @@ Keep your responses concise and focused on the lesson topic.
 **Lesson Exposition Context:**
 ---
 {exposition}
+---
+
+**Syllabus Context:**
+---
+{syllabus}
 ---
 
 **Active Task Context:** {active_task_context}

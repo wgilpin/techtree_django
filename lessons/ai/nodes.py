@@ -260,6 +260,20 @@ def classify_intent(state: LessonState) -> LessonState:
     lesson_title: str = updated_state.get("lesson_title", "Unknown Lesson")
     user_level: str = updated_state.get("user_knowledge_level", "beginner")
     exposition_summary: str = updated_state.get("lesson_exposition", "")[:500]
+    # Fetch syllabus and add to state
+    syllabus_id = updated_state.get("syllabus_id")
+    syllabus: Optional[Dict[str, Any]] = None
+    if syllabus_id:
+        from syllabus.services import SyllabusService
+
+        try:
+            # Cast syllabus_id to str to match the expected type
+            syllabus = SyllabusService().get_syllabus_by_id(str(syllabus_id))
+            updated_state["syllabus"] = syllabus
+        except Exception as e:
+            logger.error(f"Failed to fetch syllabus: {e}", exc_info=True)
+            updated_state["error_message"] = f"Failed to fetch syllabus: {e}"
+
     # Determine active task context dynamically
     active_exercise = updated_state.get("active_exercise")
     active_assessment = updated_state.get("active_assessment")
@@ -393,6 +407,24 @@ def generate_chat_response(state: LessonState) -> LessonState:
     # Call LLM
     ai_response_content: Optional[str] = None
     try:
+        # Get syllabus from state if available
+        syllabus = updated_state.get("syllabus")
+        syllabus_str = "No syllabus information available."
+        if syllabus and isinstance(syllabus, dict):
+            # Format syllabus information for the prompt
+            modules = syllabus.get("modules", [])
+            syllabus_str = f"Course Topic: {syllabus.get('topic', 'Unknown')}\n"
+            syllabus_str += f"Level: {syllabus.get('level', 'Unknown')}\n\n"
+            syllabus_str += "Course Outline:\n"
+            
+            for i, module in enumerate(modules):
+                module_title = module.get("title", f"Module {i+1}")
+                syllabus_str += f"Module {i+1}: {module_title}\n"
+                lessons = module.get("lessons", [])
+                for j, lesson in enumerate(lessons):
+                    lesson_title_in_syllabus = lesson.get("title", f"Lesson {j+1}")
+                    syllabus_str += f"  Lesson {j+1}: {lesson_title_in_syllabus}\n"
+        
         prompt_input = {
             "user_message": last_user_message,
             "history_json": formatted_history,
@@ -400,11 +432,12 @@ def generate_chat_response(state: LessonState) -> LessonState:
             "lesson_title": lesson_title,
             "level": user_level,
             "exposition": exposition_summary,
+            "syllabus": syllabus_str,
             "active_task_context": active_task_context,
             "latex_formatting_instructions": LATEX_FORMATTING_INSTRUCTIONS,
         }
-        prompt = CHAT_RESPONSE_PROMPT.format(**prompt_input)
-        response = llm.invoke(prompt)  # type: ignore
+        formatted_prompt = CHAT_RESPONSE_PROMPT.format(**prompt_input)
+        response = llm.invoke(formatted_prompt)  # type: ignore
         content: Any = response.content  # type: ignore
         if isinstance(content, str):
             ai_response_content = content.strip()
@@ -683,7 +716,6 @@ def evaluate_answer(state: LessonState) -> LessonState:
     if not llm:
         error_msg = "LLM not configured for evaluation."
         logger.error(error_msg)
-        updated_state["error_message"] = error_msg
         updated_state["new_assistant_message"] = (
             "Sorry, I cannot evaluate your answer right now (LLM unavailable)."
         )
@@ -867,7 +899,7 @@ def generate_new_assessment(state: LessonState) -> LessonState:
         logger.error(error_msg, exc_info=True)
         updated_state["error_message"] = error_msg
         updated_state["new_assistant_message"] = (
-            "Sorry, I encountered an error while generating  assessment question."
+            "Sorry, I encountered an error while generating assessment question."
         )
         updated_state["current_interaction_mode"] = "chatting"
         return updated_state
