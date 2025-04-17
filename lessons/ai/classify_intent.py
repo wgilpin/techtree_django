@@ -3,6 +3,8 @@
 import logging
 from typing import Any, Dict, List, Optional, TypedDict, cast
 
+from syllabus.services import SyllabusService
+
 from .prompts import INTENT_CLASSIFICATION_PROMPT
 from .state import LessonState
 
@@ -106,8 +108,6 @@ def classify_intent(state: LessonState) -> LessonState:
     syllabus_id = updated_state.get("syllabus_id")
     syllabus: Optional[Dict[str, Any]] = None
     if syllabus_id:
-        from syllabus.services import SyllabusService
-
         try:
             # Cast syllabus_id to str to match the expected type
             syllabus = SyllabusService().get_syllabus_by_id(str(syllabus_id))
@@ -186,6 +186,7 @@ def classify_intent(state: LessonState) -> LessonState:
 
     # Update State based on classification
     if isinstance(intent_classification, dict) and intent_classification.get("intent"):
+        # pylint: disable=unsubscriptable-object
         classified_intent = intent_classification["intent"].lower()  # type: ignore[index]
         logger.info(f"Classified intent for user {user_id}: {classified_intent}")
         interaction_mode = _map_intent_to_mode(classified_intent, updated_state)
