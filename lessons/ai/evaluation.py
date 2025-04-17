@@ -1,7 +1,8 @@
 """Answer evaluation node for lesson AI."""
 
+import json
 import logging
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, Optional, cast
 
 from .prompts import EVALUATE_ANSWER_PROMPT, LATEX_FORMATTING_INSTRUCTIONS
 from .state import LessonState
