@@ -177,6 +177,14 @@ python manage.py process_tasks
 ./kill_servers.sh
 ```
 
+### 3. Start the redis server
+
+In this case, via docker:
+
+```bash
+docker run --name redis-techtree -d -p 6379:6379 redis 
+```
+
 ### 3. Access the application
 
 Open your web browser and navigate to `http://127.0.0.1:8000/` (or the address provided by `runserver`).
