@@ -40,6 +40,16 @@ dev = [
 ]
 
 
+[tool.setuptools]
+packages = [
+    "core",
+    "lessons",
+    "syllabus",
+    "taskqueue",
+    "onboarding",
+    "techtree_django",
+]
+
 [tool.mypy]
 ignore_missing_imports = true
 plugins = ["mypy_django_plugin.main"]
@@ -81,15 +91,3 @@ filterwarnings = [
 ]
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
-
-
-
-
-
-
-
-
-
-
-
-

@@ -1,0 +1,27 @@
+{% load markdown_extras %} {# Load the custom template tags #}
+
+<!-- Chat messages -->
+{% if conversation_history %}
+    {% for message in conversation_history %}
+    <div class="message-container {% if message.role == 'user' %}user-message{% else %}assistant-message{% endif %}">
+        {% if message.role != 'user' %}
+            <i class="fas fa-robot assistant-icon"></i> {# Assuming Font Awesome is available #}
+        {% endif %}
+        <div class="chat-bubble">
+            {{ message.content|markdownify_chat|safe }} {# Use chat-specific filter #}
+        </div>
+    </div>
+    {% endfor %}
+{% else %}
+    <p class="text-center text-muted">No conversation history yet.</p> {# Keep placeholder #}
+{% endif %}
+
+{# Ensure the chat scrolls to the bottom after update #}
+<script>
+    (function() {
+        var chatHistory = document.getElementById("chat-history");
+        if (chatHistory) {
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+    })();
+</script>

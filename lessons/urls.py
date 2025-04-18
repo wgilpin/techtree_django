@@ -52,4 +52,9 @@ urlpatterns: list[URLPattern] = [
         views.check_interaction_status,
         name="check_interaction_status",
     ),
+    path(
+        "<uuid:syllabus_id>/module/<int:module_index>/lesson/<int:lesson_index>/wipe_chat/",
+        views.wipe_chat,
+        name="wipe_chat",
+    ),
 ]

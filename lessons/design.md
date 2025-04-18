@@ -48,7 +48,7 @@ Service layer for managing lesson state and history, including initialization an
 
 ### urls.py
 
-URL configuration for the lessons app, mapping URL patterns to views for lesson detail, interaction, content generation, and difficulty changes.
+URL configuration for the lessons app, mapping URL patterns to views for lesson detail, interaction, content generation, difficulty changes, and chat wiping.
 
 - No public methods.
 
@@ -64,3 +64,4 @@ Implements the main views for the lessons app, including lesson detail display, 
 - `generate_lesson_content(request, syllabus_id, module_index, lesson_index)`: Triggers generation of lesson content.
 - `check_lesson_content_status(request, syllabus_id, module_index, lesson_index)`: Checks the status of lesson content generation.
 - `change_difficulty_view(request, syllabus_id)`: Handles requests to change the difficulty of a syllabus.
+- `wipe_chat(request, syllabus_id, module_index, lesson_index)`: Wipes the chat history for a given lesson and adds a new initial message.

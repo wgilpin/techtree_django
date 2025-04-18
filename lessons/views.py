@@ -30,6 +30,64 @@ from syllabus.services import SyllabusService
 from taskqueue.models import AITask
 from taskqueue.tasks import process_ai_task
 
+
+@require_POST
+@login_required
+def wipe_chat(
+    request: HttpRequest, syllabus_id: str, module_index: int, lesson_index: int
+) -> HttpResponse:
+    """
+    Wipes the chat history for a given lesson and adds a new initial message.
+    """
+    user: "AuthUserType" = request.user  # type: ignore[assignment] # Use type alias
+    try:
+        syllabus = get_object_or_404(Syllabus, pk=syllabus_id)
+        module = get_object_or_404(Module, syllabus=syllabus, module_index=module_index)
+        lesson = get_object_or_404(Lesson, module=module, lesson_index=lesson_index)
+        progress = get_object_or_404(
+            UserProgress, user=user, syllabus=syllabus, lesson=lesson
+        )
+
+        # Delete all conversation history for this progress
+        ConversationHistory.objects.filter(progress=progress).delete()
+
+        # Add the "lesson started again" message
+        ConversationHistory.objects.create(
+            progress=progress,
+            role="assistant",
+            content="Ok, we've started this lesson again.",
+        )
+
+        # Add the standard welcome message
+        welcome_message_content = (
+            "Is there anything I can explain more? Ask me any questions, or we can do "
+            "exercises to help to think about it all. Once you're happy with this "
+            "lesson, ask me to start a quiz"
+        )
+        ConversationHistory.objects.create(
+            progress=progress, role="assistant", content=welcome_message_content
+        )
+
+        # Fetch the updated conversation history
+        conversation_history = list(
+            ConversationHistory.objects.filter(progress=progress).order_by("timestamp")
+        )
+
+        # Render the partial template with the new history
+        context = {"conversation_history": conversation_history}
+        return render(
+            request, "lessons/partials/chat_history.html", context
+        )
+
+    except Exception as e:
+        logger.error(f"Error in wipe_chat view: {e}", exc_info=True)
+        # Return an error message within the chat history div for HTMX
+        # You might want a more specific error template or message handling
+        return HttpResponse(
+            '<p class="text-danger">An error occurred while wiping the chat.</p>',
+            status=500,
+        )
+
 User = get_user_model()
 logger = logging.getLogger(__name__)
 

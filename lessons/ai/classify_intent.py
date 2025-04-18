@@ -131,8 +131,8 @@ def classify_intent(state: LessonState) -> LessonState:
 
     # Call LLM
     intent_classification: Optional[IntentClassificationResult] = None
-    # llm = _get_llm(temperature=0.1) #moved to nodes.py
-    llm = None  # moved to nodes.py
+    from .utils import _get_llm
+    llm = _get_llm(temperature=0.1)
     if not llm:
         updated_state["current_interaction_mode"] = "chatting"
         updated_state["error_message"] = "LLM unavailable for intent classification."
@@ -153,8 +153,8 @@ def classify_intent(state: LessonState) -> LessonState:
 
         try:
             # Use robust parser
-            # parsed_result = _parse_llm_json_response(response) #moved to nodes.py
-            parsed_result = None  # moved to nodes.py
+            from .utils import _parse_llm_json_response
+            parsed_result = _parse_llm_json_response(response)
             if isinstance(parsed_result, dict):
                 if "intent" in parsed_result:  # pylint: disable=unsupported-membership-test
                     intent_classification = cast(IntentClassificationResult, parsed_result)

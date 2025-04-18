@@ -127,22 +127,16 @@
                 <div id="active-task-area" class="mb-3 p-3 border rounded bg-warning-light">
                     <!-- Active exercise/assessment will be displayed here -->
                 </div>
-                <div id="chat-history" class="mb-3 p-3 border rounded"> {# Removed inline style to allow CSS control #}
-                    <!-- Chat messages -->
-                    {% if conversation_history %}
-                        {% for message in conversation_history %}
-                        <div class="message-container {% if message.role == 'user' %}user-message{% else %}assistant-message{% endif %}">
-                            {% if message.role != 'user' %}
-                                <i class="fas fa-robot assistant-icon"></i> {# Assuming Font Awesome is available #}
-                            {% endif %}
-                            <div class="chat-bubble">
-                                {{ message.content|markdownify_chat|safe }} {# Use chat-specific filter #}
-                            </div>
-                        </div>
-                        {% endfor %}
-                    {% else %}
-                        <p class="text-center text-muted">No conversation history yet.</p> {# Keep placeholder #}
-                    {% endif %}
+            
+                <button hx-post="{% url 'lessons:wipe_chat' syllabus_id=syllabus.pk module_index=module.module_index lesson_index=lesson.lesson_index %}"
+                        hx-confirm="Are you sure you want to wipe the chat history? This action cannot be undone."
+                        hx-target="#chat-history"
+                        hx-swap="innerHTML"
+                        hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+                    Wipe Chat
+                </button>
+                <div id="chat-history" class="mb-3 p-3 border rounded">
+                    {% include "lessons/partials/chat_history.html" %}
                 </div>
                 <form hx-ws="send" hx-on::ws-after-send="document.querySelector('input[name=\\'user-message\\']').value = '';">
                     {% csrf_token %}
