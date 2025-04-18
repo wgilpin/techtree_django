@@ -1,11 +1,11 @@
 """Tests for the generate_chat_response node function."""
 
-import pytest
-from unittest.mock import patch, MagicMock
-from typing import cast, Dict, Any, List
+from typing import Any, Dict, cast
+from unittest.mock import MagicMock, patch
 
-from lessons.ai.nodes import generate_chat_response
+from lessons.ai.chat import generate_chat_response
 from lessons.ai.state import LessonState
+
 
 # Helper to create a basic initial state for tests (copied for independence)
 def create_initial_lesson_state(user_message: str) -> LessonState:
@@ -33,7 +33,8 @@ def create_initial_lesson_state(user_message: str) -> LessonState:
 
 # --- Test generate_chat_response ---
 
-@patch('lessons.ai.nodes._get_llm')
+
+@patch("lessons.ai.nodes._get_llm")
 def test_generate_chat_response_success(mock_get_llm):
     """Test generating a standard chat response."""
     mock_llm_instance = MagicMock()
@@ -50,7 +51,7 @@ def test_generate_chat_response_success(mock_get_llm):
     initial_state["history_context"] = [
         {"role": "user", "content": "Hi"},
         {"role": "assistant", "content": "Hello!"},
-        {"role": "user", "content": user_message}
+        {"role": "user", "content": user_message},
     ]
 
     result_state_dict = generate_chat_response(initial_state)
@@ -66,7 +67,7 @@ def test_generate_chat_response_success(mock_get_llm):
     assert user_message in str(prompt_arg)
 
 
-@patch('lessons.ai.nodes._get_llm')
+@patch("lessons.ai.nodes._get_llm")
 def test_generate_chat_response_llm_error(mock_get_llm):
     """Test chat response generation when LLM fails."""
     mock_llm_instance = MagicMock()
@@ -77,7 +78,6 @@ def test_generate_chat_response_llm_error(mock_get_llm):
     initial_state = create_initial_lesson_state(user_message)
     # Simulate history context
     initial_state["history_context"] = [{"role": "user", "content": user_message}]
-
 
     result_state_dict = generate_chat_response(initial_state)
     result_state = cast(LessonState, result_state_dict)
@@ -90,7 +90,7 @@ def test_generate_chat_response_llm_error(mock_get_llm):
 def test_generate_chat_response_no_llm():
     """Test chat response generation when LLM is not configured."""
     # Temporarily patch _get_llm to return None for this specific test
-    with patch('lessons.ai.nodes._get_llm', return_value=None):
+    with patch("lessons.ai.nodes._get_llm", return_value=None):
         user_message = "No LLM available."
         initial_state = create_initial_lesson_state(user_message)
         # Simulate history context
@@ -100,11 +100,14 @@ def test_generate_chat_response_no_llm():
         result_state = cast(LessonState, result_state_dict)
 
         # Check the specific message for LLM unavailable
-        assert "Sorry, I cannot respond right now (LLM unavailable)." in result_state["new_assistant_message"]
+        assert (
+            "Sorry, I cannot respond right now (LLM unavailable)."
+            in result_state["new_assistant_message"]
+        )
         assert "LLM not configured" in result_state.get("error_message", "")
 
 
-@patch('lessons.ai.nodes._get_llm') # Mock LLM even though it shouldn't be called
+@patch("lessons.ai.nodes._get_llm")  # Mock LLM even though it shouldn't be called
 def test_generate_chat_response_no_user_message(mock_get_llm):
     """Test chat response when the last history item isn't from the user."""
     mock_llm_instance = MagicMock()
@@ -114,13 +117,15 @@ def test_generate_chat_response_no_user_message(mock_get_llm):
     # Simulate history ending with an assistant message
     initial_state["history_context"] = [
         {"role": "user", "content": "Hi"},
-        {"role": "assistant", "content": "Hello!"}
+        {"role": "assistant", "content": "Hello!"},
     ]
 
     result_state_dict = generate_chat_response(initial_state)
     result_state = cast(LessonState, result_state_dict)
 
     # Check the specific message for missing user message
-    assert "It seems I missed your last message." in result_state["new_assistant_message"]
-    assert result_state.get("error_message") is None # No error should be set
-    mock_llm_instance.invoke.assert_not_called() # LLM should not be called
+    assert (
+        "It seems I missed your last message." in result_state["new_assistant_message"]
+    )
+    assert result_state.get("error_message") is None  # No error should be set
+    mock_llm_instance.invoke.assert_not_called()  # LLM should not be called

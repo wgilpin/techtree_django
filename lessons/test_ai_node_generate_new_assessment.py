@@ -1,12 +1,12 @@
 """Tests for the generate_new_assessment node function."""
 
-import pytest
-from unittest.mock import patch, MagicMock
-from typing import cast, Dict, Any, List
 import json
+from typing import Any, Dict, cast
+from unittest.mock import MagicMock, patch
 
-from lessons.ai.nodes import generate_new_assessment
+from lessons.ai.assessment import generate_new_assessment
 from lessons.ai.state import LessonState
+
 
 # Helper to create a basic initial state for tests (copied for independence)
 def create_initial_lesson_state(user_message: str) -> LessonState:
@@ -20,7 +20,7 @@ def create_initial_lesson_state(user_message: str) -> LessonState:
         "topic": "Test Topic",
         "lesson_title": "Test Lesson",
         "user_id": None,
-        "lesson_exposition": "", # Add exposition for context
+        "lesson_exposition": "",  # Add exposition for context
         "user_knowledge_level": "beginner",
     }
     # Add other keys expected by LessonState with default values
@@ -34,7 +34,8 @@ def create_initial_lesson_state(user_message: str) -> LessonState:
 
 # --- Test generate_new_assessment ---
 
-@patch('lessons.ai.nodes._get_llm')
+
+@patch("lessons.ai.nodes._get_llm")
 def test_generate_new_assessment_success(mock_get_llm):
     """Test generating a new assessment successfully."""
     mock_llm_instance = MagicMock()
@@ -44,7 +45,7 @@ def test_generate_new_assessment_success(mock_get_llm):
         "question_text": "Which loop is best for known iterations?",
         "options": [{"id": "a", "text": "while"}, {"id": "b", "text": "for"}],
         "correct_answer_id": "b",
-        "explanation": "'for' loops are ideal for known iteration counts."
+        "explanation": "'for' loops are ideal for known iteration counts.",
     }
     mock_response = MagicMock()
     mock_response.content = json.dumps(mock_assessment_data)
@@ -68,7 +69,7 @@ def test_generate_new_assessment_success(mock_get_llm):
     assert "Test Lesson" in str(prompt_arg)
 
 
-@patch('lessons.ai.nodes._get_llm')
+@patch("lessons.ai.nodes._get_llm")
 def test_generate_new_assessment_llm_error(mock_get_llm):
     """Test assessment generation when LLM fails."""
     mock_llm_instance = MagicMock()
@@ -76,43 +77,45 @@ def test_generate_new_assessment_llm_error(mock_get_llm):
     mock_get_llm.return_value = mock_llm_instance
 
     initial_state = create_initial_lesson_state("Quiz me")
-    initial_state["lesson_exposition"] = "Some content" # Need exposition
+    initial_state["lesson_exposition"] = "Some content"  # Need exposition
 
     result_state_dict = generate_new_assessment(initial_state)
     result_state = cast(LessonState, result_state_dict)
 
     assert result_state["active_assessment"] is None
-    assert result_state["current_interaction_mode"] == "chatting" # Reverts on error
+    assert result_state["current_interaction_mode"] == "chatting"  # Reverts on error
     assert "LLM Assessment Error" in result_state.get("error_message", "")
     mock_llm_instance.invoke.assert_called_once()
 
 
-@patch('lessons.ai.nodes._get_llm')
+@patch("lessons.ai.nodes._get_llm")
 def test_generate_new_assessment_invalid_json(mock_get_llm):
     """Test assessment generation when LLM returns invalid JSON."""
     mock_llm_instance = MagicMock()
     mock_response_invalid = MagicMock()
-    mock_response_invalid.content = 'invalid json'
+    mock_response_invalid.content = "invalid json"
     mock_llm_instance.invoke = MagicMock(return_value=mock_response_invalid)
     mock_get_llm.return_value = mock_llm_instance
 
     initial_state = create_initial_lesson_state("Quiz me")
-    initial_state["lesson_exposition"] = "Some content" # Need exposition
+    initial_state["lesson_exposition"] = "Some content"  # Need exposition
 
     result_state_dict = generate_new_assessment(initial_state)
     result_state = cast(LessonState, result_state_dict)
 
     assert result_state["active_assessment"] is None
     assert result_state["current_interaction_mode"] == "chatting"
-    assert "Received invalid assessment format from LLM" in result_state.get("error_message", "")
+    assert "Received invalid assessment format from LLM" in result_state.get(
+        "error_message", ""
+    )
     mock_llm_instance.invoke.assert_called_once()
 
 
 def test_generate_new_assessment_no_llm():
     """Test assessment generation when LLM is not configured."""
-    with patch('lessons.ai.nodes._get_llm', return_value=None):
+    with patch("lessons.ai.nodes._get_llm", return_value=None):
         initial_state = create_initial_lesson_state("Quiz me")
-        initial_state["lesson_exposition"] = "Some content" # Need exposition
+        initial_state["lesson_exposition"] = "Some content"  # Need exposition
 
         result_state_dict = generate_new_assessment(initial_state)
         result_state = cast(LessonState, result_state_dict)
@@ -121,10 +124,11 @@ def test_generate_new_assessment_no_llm():
         assert result_state["current_interaction_mode"] == "chatting"
         assert "LLM not configured" in result_state.get("error_message", "")
 
+
 def test_generate_new_assessment_no_exposition():
     """Test assessment generation when lesson exposition is missing."""
     initial_state = create_initial_lesson_state("Quiz me")
-    initial_state["lesson_exposition"] = "" # Empty exposition
+    initial_state["lesson_exposition"] = ""  # Empty exposition
 
     result_state_dict = generate_new_assessment(initial_state)
     result_state = cast(LessonState, result_state_dict)

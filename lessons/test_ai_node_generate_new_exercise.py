@@ -1,12 +1,12 @@
 """Tests for the generate_new_exercise node function."""
 
-import pytest
-from unittest.mock import patch, MagicMock
-from typing import cast, Dict, Any, List
 import json
+from typing import Any, Dict, cast
+from unittest.mock import MagicMock, patch
 
-from lessons.ai.nodes import generate_new_exercise
+from lessons.ai.exercise import generate_new_exercise
 from lessons.ai.state import LessonState
+
 
 # Helper to create a basic initial state for tests (copied for independence)
 def create_initial_lesson_state(user_message: str) -> LessonState:
@@ -20,7 +20,7 @@ def create_initial_lesson_state(user_message: str) -> LessonState:
         "topic": "Test Topic",
         "lesson_title": "Test Lesson",
         "user_id": None,
-        "lesson_exposition": "", # Add exposition for context
+        "lesson_exposition": "",  # Add exposition for context
         "user_knowledge_level": "beginner",
     }
     # Add other keys expected by LessonState with default values
@@ -34,7 +34,8 @@ def create_initial_lesson_state(user_message: str) -> LessonState:
 
 # --- Test generate_new_exercise ---
 
-@patch('lessons.ai.nodes._get_llm')
+
+@patch("lessons.ai.nodes._get_llm")
 def test_generate_new_exercise_success(mock_get_llm):
     """Test generating a new exercise successfully."""
     mock_llm_instance = MagicMock()
@@ -44,7 +45,7 @@ def test_generate_new_exercise_success(mock_get_llm):
         "question": "What is 2+2?",
         "options": [{"id": "a", "text": "3"}, {"id": "b", "text": "4"}],
         "correct_answer_id": "b",
-        "explanation": "Basic addition."
+        "explanation": "Basic addition.",
     }
     # Mock the response object structure
     mock_response = MagicMock()
@@ -68,7 +69,7 @@ def test_generate_new_exercise_success(mock_get_llm):
     assert "Test Lesson" in str(prompt_arg)
 
 
-@patch('lessons.ai.nodes._get_llm')
+@patch("lessons.ai.nodes._get_llm")
 def test_generate_new_exercise_llm_error(mock_get_llm):
     """Test exercise generation when LLM fails."""
     mock_llm_instance = MagicMock()
@@ -76,43 +77,45 @@ def test_generate_new_exercise_llm_error(mock_get_llm):
     mock_get_llm.return_value = mock_llm_instance
 
     initial_state = create_initial_lesson_state("Give me an exercise")
-    initial_state["lesson_exposition"] = "Some content" # Need exposition
+    initial_state["lesson_exposition"] = "Some content"  # Need exposition
 
     result_state_dict = generate_new_exercise(initial_state)
     result_state = cast(LessonState, result_state_dict)
 
     assert result_state["active_exercise"] is None
-    assert result_state["current_interaction_mode"] == "chatting" # Reverts on error
+    assert result_state["current_interaction_mode"] == "chatting"  # Reverts on error
     assert "LLM Exercise Error" in result_state.get("error_message", "")
     mock_llm_instance.invoke.assert_called_once()
 
 
-@patch('lessons.ai.nodes._get_llm')
+@patch("lessons.ai.nodes._get_llm")
 def test_generate_new_exercise_invalid_json(mock_get_llm):
     """Test exercise generation when LLM returns invalid JSON."""
     mock_llm_instance = MagicMock()
     mock_response_invalid = MagicMock()
-    mock_response_invalid.content = 'invalid json'
+    mock_response_invalid.content = "invalid json"
     mock_llm_instance.invoke = MagicMock(return_value=mock_response_invalid)
     mock_get_llm.return_value = mock_llm_instance
 
     initial_state = create_initial_lesson_state("Give me an exercise")
-    initial_state["lesson_exposition"] = "Some content" # Need exposition
+    initial_state["lesson_exposition"] = "Some content"  # Need exposition
 
     result_state_dict = generate_new_exercise(initial_state)
     result_state = cast(LessonState, result_state_dict)
 
     assert result_state["active_exercise"] is None
     assert result_state["current_interaction_mode"] == "chatting"
-    assert "Received invalid exercise format from LLM" in result_state.get("error_message", "")
+    assert "Received invalid exercise format from LLM" in result_state.get(
+        "error_message", ""
+    )
     mock_llm_instance.invoke.assert_called_once()
 
 
 def test_generate_new_exercise_no_llm():
     """Test exercise generation when LLM is not configured."""
-    with patch('lessons.ai.nodes._get_llm', return_value=None):
+    with patch("lessons.ai.nodes._get_llm", return_value=None):
         initial_state = create_initial_lesson_state("Give me an exercise")
-        initial_state["lesson_exposition"] = "Some content" # Need exposition
+        initial_state["lesson_exposition"] = "Some content"  # Need exposition
 
         result_state_dict = generate_new_exercise(initial_state)
         result_state = cast(LessonState, result_state_dict)
@@ -121,10 +124,11 @@ def test_generate_new_exercise_no_llm():
         assert result_state["current_interaction_mode"] == "chatting"
         assert "LLM not configured" in result_state.get("error_message", "")
 
+
 def test_generate_new_exercise_no_exposition():
     """Test exercise generation when lesson exposition is missing."""
     initial_state = create_initial_lesson_state("Give me an exercise")
-    initial_state["lesson_exposition"] = "" # Empty exposition
+    initial_state["lesson_exposition"] = ""  # Empty exposition
 
     result_state_dict = generate_new_exercise(initial_state)
     result_state = cast(LessonState, result_state_dict)

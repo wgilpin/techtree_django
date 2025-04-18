@@ -1,6 +1,7 @@
 """Tests for the handle_chat_message service function."""
+# pylint: disable=no-member, unused-argument, missing-function-docstring, invalid-name
 
-from unittest.mock import patch, MagicMock, Mock
+from unittest.mock import patch
 from django.test import TransactionTestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -11,9 +12,8 @@ from core.models import (
     Lesson,
     LessonContent,
     UserProgress,
-    ConversationHistory,
 )
-from . import interaction_service, state_service
+from . import interaction_service
 
 User = get_user_model()
 
@@ -22,10 +22,18 @@ class LessonChatServiceTests(TransactionTestCase):
     """Tests for the handle_chat_message service function."""
 
     def setUp(self):
-        self.user = User.objects.create_user(username="testuser_chat", password="password")
-        self.syllabus = Syllabus.objects.create(topic="Test Topic Chat", level="beginner", user=self.user)
-        self.module = Module.objects.create(syllabus=self.syllabus, module_index=0, title="Test Module Chat")
-        self.lesson = Lesson.objects.create(module=self.module, lesson_index=0, title="Test Lesson Chat")
+        self.user = User.objects.create_user(
+            username="testuser_chat", password="password"
+        )
+        self.syllabus = Syllabus.objects.create(
+            topic="Test Topic Chat", level="beginner", user=self.user
+        )
+        self.module = Module.objects.create(
+            syllabus=self.syllabus, module_index=0, title="Test Module Chat"
+        )
+        self.lesson = Lesson.objects.create(
+            module=self.module, lesson_index=0, title="Test Lesson Chat"
+        )
         self.lesson_content = LessonContent.objects.create(
             lesson=self.lesson,
             content={"exposition": "Initial test content for chat tests."},
@@ -45,7 +53,10 @@ class LessonChatServiceTests(TransactionTestCase):
             lesson_index=self.lesson.lesson_index,
             lesson=self.lesson,
             status="in_progress",
-            lesson_state_json={"initial": True, "updated_at": timezone.now().isoformat()},
+            lesson_state_json={
+                "initial": True,
+                "updated_at": timezone.now().isoformat(),
+            },
         )
 
         response = interaction_service.handle_chat_message(
@@ -59,8 +70,12 @@ class LessonChatServiceTests(TransactionTestCase):
 
     @patch("lessons.interaction_service.handle_chat_message")
     @patch("lessons.interaction_service.LessonInteractionGraph")
-    def test_handle_chat_message_generates_exercise(self, MockGraph, mock_handle_chat_message):
-        mock_handle_chat_message.return_value = {"new_assistant_message": "Here is an exercise"}
+    def test_handle_chat_message_generates_exercise(
+        self, MockGraph, mock_handle_chat_message
+    ):
+        mock_handle_chat_message.return_value = {
+            "new_assistant_message": "Here is an exercise"
+        }
 
         progress = UserProgress.objects.create(
             user=self.user,
@@ -69,7 +84,10 @@ class LessonChatServiceTests(TransactionTestCase):
             lesson_index=self.lesson.lesson_index,
             lesson=self.lesson,
             status="in_progress",
-            lesson_state_json={"initial": True, "updated_at": timezone.now().isoformat()},
+            lesson_state_json={
+                "initial": True,
+                "updated_at": timezone.now().isoformat(),
+            },
         )
 
         response = interaction_service.handle_chat_message(
@@ -83,7 +101,9 @@ class LessonChatServiceTests(TransactionTestCase):
 
     @patch("lessons.interaction_service.handle_chat_message")
     @patch("lessons.interaction_service.LessonInteractionGraph")
-    def test_handle_chat_message_evaluates_answer(self, MockGraph, mock_handle_chat_message):
+    def test_handle_chat_message_evaluates_answer(
+        self, MockGraph, mock_handle_chat_message
+    ):
         mock_handle_chat_message.return_value = {"new_assistant_message": "Correct!"}
 
         progress = UserProgress.objects.create(
@@ -93,7 +113,10 @@ class LessonChatServiceTests(TransactionTestCase):
             lesson_index=self.lesson.lesson_index,
             lesson=self.lesson,
             status="in_progress",
-            lesson_state_json={"initial": True, "updated_at": timezone.now().isoformat()},
+            lesson_state_json={
+                "initial": True,
+                "updated_at": timezone.now().isoformat(),
+            },
         )
 
         response = interaction_service.handle_chat_message(
@@ -107,8 +130,12 @@ class LessonChatServiceTests(TransactionTestCase):
 
     @patch("lessons.interaction_service.handle_chat_message")
     @patch("lessons.interaction_service.LessonInteractionGraph")
-    def test_handle_chat_message_generates_assessment(self, MockGraph, mock_handle_chat_message):
-        mock_handle_chat_message.return_value = {"new_assistant_message": "Here is an assessment"}
+    def test_handle_chat_message_generates_assessment(
+        self, MockGraph, mock_handle_chat_message
+    ):
+        mock_handle_chat_message.return_value = {
+            "new_assistant_message": "Here is an assessment"
+        }
 
         progress = UserProgress.objects.create(
             user=self.user,
@@ -117,7 +144,10 @@ class LessonChatServiceTests(TransactionTestCase):
             lesson_index=self.lesson.lesson_index,
             lesson=self.lesson,
             status="in_progress",
-            lesson_state_json={"initial": True, "updated_at": timezone.now().isoformat()},
+            lesson_state_json={
+                "initial": True,
+                "updated_at": timezone.now().isoformat(),
+            },
         )
 
         response = interaction_service.handle_chat_message(
@@ -131,8 +161,12 @@ class LessonChatServiceTests(TransactionTestCase):
 
     @patch("lessons.interaction_service.handle_chat_message")
     @patch("lessons.interaction_service.LessonInteractionGraph")
-    def test_handle_chat_message_evaluates_assessment(self, MockGraph, mock_handle_chat_message):
-        mock_handle_chat_message.return_value = {"new_assistant_message": "You got one right."}
+    def test_handle_chat_message_evaluates_assessment(
+        self, MockGraph, mock_handle_chat_message
+    ):
+        mock_handle_chat_message.return_value = {
+            "new_assistant_message": "You got one right."
+        }
 
         progress = UserProgress.objects.create(
             user=self.user,
@@ -141,7 +175,10 @@ class LessonChatServiceTests(TransactionTestCase):
             lesson_index=self.lesson.lesson_index,
             lesson=self.lesson,
             status="in_progress",
-            lesson_state_json={"initial": True, "updated_at": timezone.now().isoformat()},
+            lesson_state_json={
+                "initial": True,
+                "updated_at": timezone.now().isoformat(),
+            },
         )
 
         response = interaction_service.handle_chat_message(

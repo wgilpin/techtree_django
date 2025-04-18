@@ -9,7 +9,6 @@ from core.constants import DIFFICULTY_BEGINNER
 from core.models import (
     Syllabus, Module, Lesson, LessonContent
 )
-from . import state_service # Import state_service
 
 User = get_user_model()
 
