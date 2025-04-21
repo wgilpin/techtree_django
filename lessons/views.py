@@ -4,9 +4,11 @@
 
 import json
 import logging
-import re
-from typing import Any, Dict, Optional, cast
+from typing import Optional, cast
 
+from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
+from channels.layers import get_channel_layer
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
@@ -14,21 +16,29 @@ from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import ObjectDoesNotExist
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template.loader import render_to_string
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
 
-from core.models import (
-    ConversationHistory,
-    Lesson,
-    LessonContent,
-    Module,
-    Syllabus,
-    UserProgress,
-)
+from core.models import (ConversationHistory, Lesson, LessonContent, Module,
+                         Syllabus, UserProgress)
 from lessons.state_service import initialize_lesson_state
+from lessons.view_helpers.content_helpers import (
+    _extract_and_validate_exposition, _handle_failed_content,
+    _handle_lesson_content_creation)
+from lessons.view_helpers.error_handlers import _handle_lesson_detail_error
+from lessons.view_helpers.general_helpers import (_build_lesson_context,
+                                                  _get_lesson_objects)
 from syllabus.services import SyllabusService
 from taskqueue.models import AITask
-from taskqueue.tasks import process_ai_task
+from taskqueue.tasks import process_ai_task as schedule_ai_task
+
+# Get the actual user model class
+UserModel = get_user_model()
+logger = logging.getLogger(__name__)
+
+# Define the type alias using the actual user model
+AuthUserType = UserModel # Use the retrieved UserModel
 
 
 @require_POST
@@ -39,7 +49,7 @@ def wipe_chat(
     """
     Wipes the chat history for a given lesson and adds a new initial message.
     """
-    user: "AuthUserType" = request.user  # type: ignore[assignment] # Use type alias
+    user: AuthUserType = request.user # type: ignore[assignment,valid-type]
     try:
         syllabus = get_object_or_404(Syllabus, pk=syllabus_id)
         module = get_object_or_404(Module, syllabus=syllabus, module_index=module_index)
@@ -75,9 +85,7 @@ def wipe_chat(
 
         # Render the partial template with the new history
         context = {"conversation_history": conversation_history}
-        return render(
-            request, "lessons/partials/chat_history.html", context
-        )
+        return render(request, "lessons/partials/chat_history.html", context)
 
     except Exception as e:
         logger.error(f"Error in wipe_chat view: {e}", exc_info=True)
@@ -88,11 +96,11 @@ def wipe_chat(
             status=500,
         )
 
-User = get_user_model()
-logger = logging.getLogger(__name__)
 
-# Type alias for auth user to avoid mypy errors
-AuthUserType = Any  # Replace with actual type when available
+# UserModel already defined above
+# logger already defined above
+
+# AuthUserType already defined above
 
 
 @require_GET
@@ -117,7 +125,7 @@ def lesson_wait(
 @require_GET
 @login_required
 def poll_lesson_ready(
-    request: HttpRequest, syllabus_id: str, module_index: int, lesson_index: int
+    _: HttpRequest, syllabus_id: str, module_index: int, lesson_index: int
 ) -> JsonResponse:
     """
     Minimal endpoint for polling if lesson content is ready.
@@ -148,51 +156,6 @@ def poll_lesson_ready(
         return JsonResponse({"status": "ERROR", "error": str(e)}, status=500)
 
 
-def clean_exposition_string(text: Optional[str]) -> Optional[str]:
-    """Decodes unicode escapes and fixes specific known issues in exposition text."""
-    if not text:
-        return text
-
-    cleaned_text = text
-    try:
-        # Decode standard Python unicode escapes (\uXXXX, \xXX)
-        # Using 'latin-1' to handle potential byte values mixed with unicode escapes
-        # and 'ignore' errors to skip problematic sequences.
-        # Use 'raw_unicode_escape' which only handles \uXXXX and \UXXXXXXXX, leaving other backslashes alone.
-        cleaned_text = cleaned_text.encode("latin-1", errors="ignore").decode(
-            "raw_unicode_escape", errors="ignore"
-        )
-        # Alternative: cleaned_text = bytes(text, "utf-8").decode("unicode_escape")
-    except Exception as e:
-        logger.warning("Failed to decode unicode escapes in exposition: %s", e)
-        # Continue with the original text if decoding fails, specific fixes might still apply
-
-    # --- Specific known fixes (apply AFTER unicode decoding) ---
-
-    # Fix: \u0007pprox -> \approx (where \u0007 might be a bell char or similar artifact)
-    # This handles the case where the unicode decoding might not have fixed it.
-    cleaned_text = cleaned_text.replace(
-        "\u0007pprox", r"\approx"
-    )  # Use raw string for \approx
-
-    # Fix: \x08egin{ -> \begin{ (Backspace artifact)
-    cleaned_text = cleaned_text.replace("\x08egin{", r"\begin{")  # Use raw string
-
-    # Fix: â€" -> – (common Mojibake for en-dash)
-    cleaned_text = cleaned_text.replace("â€“", "\u2013")
-    # Fix: Ã¶ -> ö (common Mojibake for o-umlaut, e.g., Eötvös)
-    cleaned_text = cleaned_text.replace("Ã¶", "ö")
-    # Fix: \\, -> \, (Extra backslash before LaTeX space)
-    cleaned_text = cleaned_text.replace("\\\\,", r"\,")
-    # Fix: \\mu -> \mu, \\alpha -> \alpha, etc. (Extra backslash before greek letters)
-    # Using regex to be more general for common LaTeX commands
-    cleaned_text = re.sub(r"\\\\([a-zA-Z]+)", r"\\\1", cleaned_text)
-
-    # Add other specific replacements if needed based on observed errors
-
-    return cleaned_text
-
-
 @login_required
 def lesson_detail(
     request: HttpRequest, syllabus_id: str, module_index: int, lesson_index: int
@@ -204,14 +167,10 @@ def lesson_detail(
     POST interactions are handled by the 'handle_lesson_interaction' view.
     """
 
-    user: "AuthUserType" = request.user  # type: ignore[assignment] # Use type alias
+    user: AuthUserType = request.user # type: ignore[assignment,valid-type]
 
     if request.method == "POST":
         # Redirect POST requests intended for the detail page (e.g., non-JS form fallback)
-        # to the dedicated interaction handler or simply disallow standard POST here.
-        # For simplicity, let's redirect to the GET version.
-        # A more robust solution might show an error or handle basic form submissions
-        # if non-AJAX interaction is desired.
         logger.warning(
             "Received standard POST on lesson_detail view for lesson %s:%s:%s. Redirecting.",
             syllabus_id,
@@ -222,64 +181,14 @@ def lesson_detail(
 
     # --- GET Request Logic ---
     try:
-        syllabus = get_object_or_404(Syllabus, pk=syllabus_id)  # Add user check later
-        module = get_object_or_404(Module, syllabus=syllabus, module_index=module_index)
-        lesson = get_object_or_404(Lesson, module=module, lesson_index=lesson_index)
-
-        # --- Fetch existing data, but don't trigger generation here ---
-        progress, created = UserProgress.objects.get_or_create(
-            user=user,
-            syllabus=syllabus,
-            lesson=lesson,
-            defaults={
-                "module_index": module.module_index,
-                "lesson_index": lesson.lesson_index,
-                "status": "not_started",
-            },
+        syllabus, module, lesson, progress, created = _get_lesson_objects(
+            user, syllabus_id, module_index, lesson_index
         )
 
-        current_lesson_content: Optional[LessonContent] = LessonContent.objects.filter(
-            lesson=lesson
-        ).first()  # Type hint
-
-        # --- Determine Content Status ---
-        content_status: str = "NOT_FOUND"  # Default if no record
-        if current_lesson_content:
-            content_status = (
-                current_lesson_content.status
-            )  # Get status from the model field
-        else:
-            # No content exists: create a LessonContent record and trigger generation
-
-            current_lesson_content = LessonContent.objects.create(
-                lesson=lesson,
-                content={},
-                status=LessonContent.StatusChoices.PENDING,
-            )
-            content_status = LessonContent.StatusChoices.PENDING
-
-            # Only create a task if one is not already pending/processing for this lesson
-            existing_task = (
-                AITask.objects.filter(
-                    lesson=lesson,
-                    task_type=AITask.TaskType.LESSON_CONTENT,
-                    status__in=[
-                        AITask.TaskStatus.PENDING,
-                        AITask.TaskStatus.PROCESSING,
-                    ],
-                )
-                .order_by("-created_at")
-                .first()
-            )
-            if not existing_task:
-                user_obj = cast(AuthUserType, request.user)
-                task = AITask.objects.create(
-                    task_type=AITask.TaskType.LESSON_CONTENT,
-                    input_data={"lesson_id": str(lesson.pk)},
-                    user=user_obj,
-                    lesson=lesson,
-                )
-                process_ai_task(str(task.task_id))
+        # Pass the actual user object
+        current_lesson_content, content_status = _handle_lesson_content_creation(
+            lesson, user
+        )
 
         # If content is not ready, redirect to wait page
         if content_status in [
@@ -313,204 +222,38 @@ def lesson_detail(
             )
             # Proceed without absolute number if calculation fails
 
-        if created:
-            initial_lesson_content = LessonContent.objects.filter(
-                lesson=lesson, status=LessonContent.StatusChoices.COMPLETED
-            ).first()
+        _update_progress_if_needed(progress, user, lesson, created)
 
-            progress.lesson_state_json = initialize_lesson_state(
-                user, lesson, initial_lesson_content
-            )
-            progress.save()
-        if created or progress.status == "not_started":
-            progress.status = "in_progress"
-            progress.save(update_fields=["status", "updated_at"])
-            logger.info(
-                "Set/updated UserProgress %s status to 'in_progress'.", progress.pk
-            )
-
-        # --- Extract Exposition Content (defensively handle malformed content) ---
-        exposition_content_value: Optional[str] = None
-        try:
-            if current_lesson_content and content_status not in [
-                LessonContent.StatusChoices.FAILED,
-                LessonContent.StatusChoices.GENERATING,
-            ]:
-                content_data = current_lesson_content.content
-                if isinstance(content_data, dict):
-                    exposition_value = content_data.get("exposition")
-                    if exposition_value:
-                        exposition_content_value = clean_exposition_string(
-                            exposition_value
-                        )
-                # If content is not a dict or missing exposition, exposition_content_value remains None
-        except Exception as e:
-            logger.error(
-                "Error extracting exposition content for lesson %s: %s",
-                lesson.pk,
-                e,
-                exc_info=True,
-            )
-            exposition_content_value = None
-
-        # After defensive extraction, adjust content_status if needed
-        if exposition_content_value and (
-            content_status == LessonContent.StatusChoices.PENDING or not content_status
-        ):
-            if current_lesson_content:
-                logger.info(
-                    "Found valid exposition for lesson content %s with status %s, "
-                    "treating as COMPLETED for display.",
-                    current_lesson_content.pk,  # type: ignore[union-attr]
-                    content_status,
-                )
-            content_status = LessonContent.StatusChoices.COMPLETED
-        elif content_status == LessonContent.StatusChoices.COMPLETED:
-            if current_lesson_content and not isinstance(
-                current_lesson_content.content, dict
-            ):
-                # If status was COMPLETED but content isn't a dict, mark as FAILED
-                logger.warning(
-                    "Lesson content (pk=%s) status is COMPLETED but content is not a dict (Type: %s). "
-                    "Marking as FAILED.",
-                    current_lesson_content.pk,
-                    type(current_lesson_content.content),
-                )
-                content_status = LessonContent.StatusChoices.FAILED
-            elif not exposition_content_value:
-                # If status was COMPLETED but exposition is missing, mark as FAILED
-                logger.warning(
-                    "Lesson content (pk=%s) status is COMPLETED but 'exposition' is missing or empty. "
-                    "Marking as FAILED.",
-                    current_lesson_content.pk,  # type: ignore[union-attr]
-                )
-                content_status = LessonContent.StatusChoices.FAILED
-
-        # --- Conversation History ---
-        conversation_history = list(
-            ConversationHistory.objects.filter(progress=progress).order_by("timestamp")
+        exposition_content_value, content_status = _extract_and_validate_exposition(
+            current_lesson_content, content_status
         )
 
-        # --- Add Welcome Message if History is Empty ---
-        if not conversation_history:
-            welcome_message_content = (
-                "Is there anything I can explain more? Ask me any questions, or we can do "
-                "exercises to help to think about it all. Once you're happy with this "
-                "lesson, ask me to start a quiz"
-            )
-            # Create an unsaved ConversationHistory instance for the welcome message.
-            welcome_message_instance = ConversationHistory(
-                role="assistant",
-                content=welcome_message_content,
-            )
-            conversation_history.insert(0, welcome_message_instance)
-            logger.info(
-                "Prepended initial welcome message to empty conversation history for lesson %s.",
-                lesson.pk,
-            )
-        # --- End Welcome Message ---
+        conversation_history = _prepare_conversation_history(progress, lesson)
 
-        # If content status is FAILED, automatically trigger regeneration
-        trigger_regeneration = False
-        regeneration_url = None
-        if content_status == LessonContent.StatusChoices.FAILED:
-            trigger_regeneration = True
-            regeneration_url = reverse(
-                "lessons:generate_lesson_content",
-                args=[syllabus_id, module_index, lesson_index],
-            )
-            messages.info(
-                request,
-                "Lesson content generation failed previously. Automatically retrying...",
-            )
+        trigger_regeneration, regeneration_url = _handle_failed_content(
+            content_status, syllabus_id, module_index, lesson_index, request
+        )
 
-        context = {
-            "syllabus": syllabus,
-            "module": module,
-            "lesson": lesson,
-            "progress": progress,
-            "title": f"Lesson: {lesson.title}",
-            # 'lesson_content': lesson_content, # No longer needed directly
-            "exposition_content": exposition_content_value,  # Now only set if COMPLETED
-            "content_status": content_status,  # Pass the determined status
-            "absolute_lesson_number": absolute_lesson_number,
-            "conversation_history": conversation_history,
-            "lesson_state_json": (
-                json.dumps(progress.lesson_state_json)
-                if progress and progress.lesson_state_json
-                else "{}"
-            ),
-            # Add status constants for easy use in template if needed (optional but helpful)
-            "LessonContentStatus": {
-                "COMPLETED": LessonContent.StatusChoices.COMPLETED,
-                "GENERATING": LessonContent.StatusChoices.GENERATING,
-                "FAILED": LessonContent.StatusChoices.FAILED,
-                "PENDING": LessonContent.StatusChoices.PENDING,
-                # NOT_FOUND is effectively handled by PENDING now
-            },
-            # Add regeneration flags
-            "trigger_regeneration": trigger_regeneration,
-            "regeneration_url": regeneration_url,
-        }
+        context = _build_lesson_context(
+            syllabus,
+            module,
+            lesson,
+            progress,
+            exposition_content_value,
+            content_status,
+            absolute_lesson_number,
+            conversation_history,
+            trigger_regeneration,
+            regeneration_url,
+        )
         return render(request, "lessons/lesson_detail.html", context)
     except (Syllabus.DoesNotExist, Module.DoesNotExist, Lesson.DoesNotExist) as exc:
-        logger.warning(
-            "Resource not found in lesson_detail view: %s:%s:%s - %s",
-            syllabus_id,
-            module_index,
-            lesson_index,
-            exc,
+        return _handle_lesson_detail_error(
+            exc, syllabus_id, module_index, lesson_index, request, status=404
         )
-        return HttpResponse("Lesson not found", status=404)
     except Exception as e:
-        logger.error(
-            "Error in lesson_detail view for %s:%s:%s: %s",
-            syllabus_id,
-            module_index,
-            lesson_index,
-            e,
-            exc_info=True,
-        )
-
-        class Dummy:
-            """dummy class so pk field is present"""
-
-            def __init__(self, pk):
-                self.pk = pk
-                self.module_index = 0
-                self.lesson_index = 0
-                self.title = ""
-                self.summary = ""
-
-        dummy_uuid = "00000000-0000-0000-0000-000000000000"
-        dummy_syllabus = Dummy(dummy_uuid)
-        dummy_module = Dummy(dummy_uuid)
-        dummy_lesson = Dummy(dummy_uuid)
-
-        # Type annotation for fallback_context
-
-        fallback_context: Dict[str, Any] = {
-            "syllabus": dummy_syllabus,
-            "module": dummy_module,
-            "lesson": dummy_lesson,
-            "progress": None,
-            "title": "Lesson",
-            "exposition_content": None,
-            "content_status": "ERROR",
-            "absolute_lesson_number": None,
-            "conversation_history": [],
-            "lesson_state_json": "{}",
-            "LessonContentStatus": {
-                "COMPLETED": "COMPLETED",
-                "GENERATING": "GENERATING",
-                "FAILED": "FAILED",
-                "PENDING": "PENDING",
-            },
-            "trigger_regeneration": False,
-            "regeneration_url": None,
-        }
-        return render(
-            request, "lessons/lesson_detail.html", fallback_context, status=200
+        return _handle_lesson_detail_error(
+            e, syllabus_id, module_index, lesson_index, request
         )
 
 
@@ -532,7 +275,7 @@ def handle_lesson_interaction(
         # For non-AJAX, redirect to login
         return redirect_to_login(request.get_full_path())
 
-    user: "AuthUserType" = request.user  # type: ignore[assignment] # Use type alias
+    user: AuthUserType = request.user # type: ignore[assignment,valid-type]
     try:
         # Parse JSON body explicitly
         try:
@@ -543,7 +286,7 @@ def handle_lesson_interaction(
             )
 
         user_message = data.get("message", "").strip()
-        data.get("submission_type", "chat").strip()
+        # submission_type = data.get("submission_type", "chat").strip() # Variable not used
 
         if not user_message:
             return JsonResponse(
@@ -582,7 +325,7 @@ def handle_lesson_interaction(
         )
 
         # Create a task to process the interaction
-        user_obj = cast(AuthUserType, request.user)
+        user_obj = cast(AuthUserType, request.user) # type: ignore[valid-type]
         task = AITask.objects.create(
             task_type=AITask.TaskType.LESSON_INTERACTION,
             input_data={
@@ -595,7 +338,7 @@ def handle_lesson_interaction(
         )
 
         # Process the task
-        process_ai_task(str(task.task_id))
+        schedule_ai_task(task_id=task.task_id)  # Pass task_id
 
         # Return a success response with the task ID for polling
         return JsonResponse({"task_id": str(task.task_id), "status": "pending"})
@@ -625,7 +368,7 @@ def generate_lesson_content(
         )
 
         # Create a task to generate the content
-        user_obj = cast(AuthUserType, request.user)
+        user_obj = cast(AuthUserType, request.user) # type: ignore[valid-type]
         task = AITask.objects.create(  # type: ignore[attr-defined]
             task_type=AITask.TaskType.LESSON_CONTENT,
             input_data={
@@ -636,7 +379,7 @@ def generate_lesson_content(
         )
 
         # Process the task
-        process_ai_task(str(task.task_id))
+        schedule_ai_task(task_id=task.task_id)  # Pass task_id
 
         # Return a success response with the task ID for polling
         return JsonResponse(
@@ -704,70 +447,6 @@ def check_lesson_content_status(
         return JsonResponse({"error": str(e)}, status=500)
 
 
-@require_GET
-@login_required
-def check_interaction_status(
-    request: HttpRequest,
-    syllabus_id: str,
-    module_index: int,
-    lesson_index: int,
-) -> JsonResponse:
-    """
-    Poll the status of a lesson interaction (chat/answer) by task_id.
-    Returns assistant message and lesson state if ready.
-    Always returns JSON, even on error.
-    """
-
-    task_id = request.GET.get("task_id")
-    if not task_id:
-        return JsonResponse({"status": "error", "error": "Missing task_id"}, status=400)
-    try:
-        task = AITask.objects.get(pk=task_id)
-    except Exception as e:
-        # Always return JSON, never HTML
-        return JsonResponse(
-            {"status": "error", "error": f"Task not found: {str(e)}"}, status=200
-        )
-
-    # Get progress_id from task
-    progress_id = task.input_data.get("progress_id")
-    if not progress_id:
-        return JsonResponse(
-            {"status": "error", "error": "No progress_id in task"}, status=500
-        )
-    try:
-        progress = UserProgress.objects.get(pk=progress_id)
-    except UserProgress.DoesNotExist:
-        return JsonResponse(
-            {"status": "error", "error": "Progress not found"}, status=404
-        )
-
-    # Get the latest assistant message for this progress
-    assistant_message = (
-        ConversationHistory.objects.filter(progress=progress, role="assistant")
-        .order_by("-timestamp")
-        .first()
-    )
-    assistant_content = assistant_message.content if assistant_message else None
-
-    # If no assistant message yet, keep polling (pending)
-    if not assistant_message:
-        # Optionally, check if the task failed
-        if task.status == AITask.TaskStatus.FAILED:
-            # Defensive: some AITask models may not have an 'error' field
-            error_msg = getattr(task, "error", None) or "Task failed"
-            return JsonResponse({"status": "failed", "error": error_msg})
-        return JsonResponse({"status": "pending"})
-
-    # Return lesson state and assistant message
-    return JsonResponse(
-        {
-            "status": "completed",
-            "assistant_message": assistant_content,
-            "lesson_state": progress.lesson_state_json,
-        }
-    )
-
 
 @require_GET  # Use GET as it's triggered by a link click
 @login_required  # type: ignore
@@ -816,7 +495,7 @@ def change_difficulty_view(request: HttpRequest, syllabus_id: str) -> HttpRespon
             return redirect("syllabus:detail", syllabus_id=str(existing_syllabus.pk))
 
         # Otherwise, create a new syllabus with the new difficulty
-        user_obj = cast(AuthUserType, request.user)
+        user_obj = cast(AuthUserType, request.user) # type: ignore[valid-type]
         logger.info(
             f"Creating new {difficulty} syllabus for topic: {original_syllabus.topic}"
         )
@@ -849,8 +528,158 @@ def change_difficulty_view(request: HttpRequest, syllabus_id: str) -> HttpRespon
             f"Syllabus with ID {syllabus_id} not found in change_difficulty_view"
         )
         messages.error(request, "The requested syllabus was not found.")
-        return redirect("dashboard")
+        return redirect("dashboard")  # type: ignore
     except Exception as e:
         logger.error(f"Error in change_difficulty_view: {e}", exc_info=True)
         messages.error(request, "An error occurred while changing difficulty.")
-        return redirect("syllabus:detail", syllabus_id=syllabus_id)
+        # Redirect to dashboard as syllabus_id might not be available
+        return redirect("dashboard")  # type: ignore
+
+
+def _prepare_conversation_history(progress, lesson):
+    """Prepare conversation history with initial welcome message if empty."""
+    history = list(
+        ConversationHistory.objects.filter(progress=progress).order_by("timestamp")
+    )
+
+    if not history:
+        welcome_content = (
+            "Is there anything I can explain more? Ask me any questions, or we can do "
+            "exercises to help to think about it all. Once you're happy with this "
+            "lesson, ask me to start a quiz"
+        )
+        history.insert(
+            0,
+            ConversationHistory(
+                role="assistant",
+                content=welcome_content,
+            ),
+        )
+        logger.info(
+            "Prepended welcome message to empty history for lesson %s", lesson.pk
+        )
+    return history
+
+
+def _update_progress_if_needed(progress, user, lesson, created):
+    """Initialize and update user progress status as needed."""
+    if created:
+        initial_lesson_content = LessonContent.objects.filter(
+            lesson=lesson, status=LessonContent.StatusChoices.COMPLETED
+        ).first()
+
+        # Pass the correctly typed user object
+        progress.lesson_state_json = initialize_lesson_state(
+            user, lesson, initial_lesson_content
+        )
+        progress.save()
+
+    if created or progress.status == "not_started":
+        progress.status = "in_progress"
+        progress.save(update_fields=["status", "updated_at"])
+        logger.info("Set/updated UserProgress %s status to 'in_progress'.", progress.pk)
+
+
+# --- Quiz Views ---
+
+
+@login_required
+@require_POST # Keep POST as the button uses hx-post
+async def start_quiz_view(request: HttpRequest, lesson_id: str) -> HttpResponse:
+    """
+    Initiates the quiz for a lesson by updating user progress state,
+    scheduling an AI task to generate the first question, and notifying the user via chat.
+    """
+    user: AuthUserType = request.user # type: ignore[assignment,valid-type]
+    try:
+        lesson = await database_sync_to_async(get_object_or_404)(Lesson, pk=lesson_id)
+        progress = await database_sync_to_async(get_object_or_404)(
+            UserProgress, user=user, lesson=lesson
+        )
+        syllabus_level = await database_sync_to_async(lambda: lesson.module.syllabus.level)() # type: ignore
+
+        # Update lesson state to indicate quiz started
+        # Assuming lesson_state_json is a JSONField
+        current_state = progress.lesson_state_json or {}
+        # Ensure we don't overwrite other state, just add/update quiz_state
+        updated_state = {**current_state, "quiz_state": {"step": "start"}}
+        progress.lesson_state_json = updated_state # Update the field directly
+
+        await database_sync_to_async(progress.save)(update_fields=["lesson_state_json", "updated_at"])
+
+        # Create and trigger background task for quiz processing
+        task = await database_sync_to_async(AITask.objects.create)(
+            task_type=AITask.TaskType.PROCESS_QUIZ_INTERACTION,
+            input_data={
+                "lesson_id": str(lesson.pk),
+                "user_id": str(user.pk),
+                "difficulty": syllabus_level,
+                "state": {"step": "start"}, # Initial state marker for quiz processor
+            },
+            user=user,
+            lesson=lesson,
+            # progress=progress, # Link task to progress if needed for easier lookup
+        )
+        await sync_to_async(schedule_ai_task)(str(task.task_id))
+
+        logger.info(f"Initiated quiz for lesson {lesson_id} and user {user.pk}. Scheduled AITask {task.task_id}.")
+
+        # Send a confirmation message to the chat via WebSocket
+        channel_layer = get_channel_layer()
+        group_name = f"lesson_chat_{lesson_id}"
+
+        # Create a simple assistant message object (mimicking ConversationHistory)
+        # In a real scenario, you might want to save this to the DB as well
+        start_message_obj = ConversationHistory(
+            role="assistant",
+            content="Okay, let's start the quiz! Here comes the first question...",
+            message_type="chat", # Or a new type like 'quiz_status'
+            progress=progress # Associate with progress if saving
+        )
+        # await database_sync_to_async(start_message_obj.save)() # Optional: save to DB
+
+        start_message_html = render_to_string(
+            "lessons/_chat_message.html", {"message": start_message_obj}
+        )
+        scroll_script = (
+            '<script>var chatHistory = document.getElementById("chat-history"); '
+            "chatHistory.scrollTop = chatHistory.scrollHeight;</script>"
+        )
+        oob_chat_message = (
+            f'<div id="chat-history" hx-swap-oob="beforeend">{start_message_html}{scroll_script}</div>'
+        )
+
+        await channel_layer.group_send(
+            group_name,
+            {
+                "type": "chat.message", # Use the existing chat message handler
+                "message": oob_chat_message,
+            },
+        )
+
+        # Return 204 No Content to indicate success without changing the page
+        # The button remains, but the quiz starts in the chat.
+        return HttpResponse(status=204)
+
+    except Lesson.DoesNotExist:
+        logger.error(f"Lesson with ID {lesson_id} not found in start_quiz_view.")
+        # Return an HTMX-friendly error message that replaces the button
+        return HttpResponse(
+            '<div class="alert alert-danger">Error: Lesson not found.</div>',
+            status=404,
+            headers={'HX-Reswap': 'outerHTML', 'HX-Retarget': '#quiz-trigger-area'} # Tell HTMX where to put the error
+        )
+    except UserProgress.DoesNotExist:
+        logger.error(f"UserProgress not found for user {user.pk} and lesson {lesson_id} in start_quiz_view.")
+        return HttpResponse(
+            '<div class="alert alert-danger">Error: Could not find your progress for this lesson.</div>',
+            status=404,
+            headers={'HX-Reswap': 'outerHTML', 'HX-Retarget': '#quiz-trigger-area'}
+        )
+    except Exception as e:
+        logger.error(f"Error in start_quiz_view: {e}", exc_info=True)
+        return HttpResponse(
+            '<div class="alert alert-danger">An error occurred initiating the quiz.</div>',
+            status=500,
+            headers={'HX-Reswap': 'outerHTML', 'HX-Retarget': '#quiz-trigger-area'}
+        )

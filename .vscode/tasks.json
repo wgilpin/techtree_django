@@ -1,0 +1,66 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Kill Servers",
+      "type": "shell",
+      "command": "./kill_servers.sh",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false,
+        "close": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Django Server",
+      "type": "shell",
+      "command": "python manage.py runserver",
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "group": "dev_servers" // Use a group name
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Task Processor",
+      "type": "shell",
+      "command": "python manage.py process_tasks",
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "group": "dev_servers" // Use the same group name
+      },
+      "problemMatcher": []
+    },
+    // New compound task to start servers in parallel
+    {
+      "label": "Start Servers Parallel",
+      "dependsOn": [
+        "Run Django Server",
+        "Run Task Processor"
+      ],
+      // No dependsOrder means parallel execution
+      "problemMatcher": []
+    },
+    // Main compound task orchestrating the sequence
+    {
+      "label": "Start Dev Environment",
+      "dependsOrder": "sequence", // Ensure Kill Servers runs first
+      "dependsOn": [
+        "Kill Servers",
+        "Start Servers Parallel" // Then run the parallel startup task
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}

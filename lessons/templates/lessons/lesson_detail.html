@@ -9,7 +9,7 @@
     <nav aria-label="breadcrumb">
         <span class="breadcrumb-custom"> {# Or use appropriate styling class #}
             <a href="{% url 'syllabus:detail' syllabus.pk %}">{{ syllabus.topic }}</a>
-            &nbsp;&gt;&nbsp; {# Use HTML entity for > #}
+            &nbsp;>&nbsp; {# Use HTML entity for > #}
             <a href="{% url 'syllabus:module_detail' syllabus.pk module.module_index %}">Module {{ module.module_index }}: {{ module.title }}</a>
         </span>
     </nav>
@@ -82,7 +82,7 @@
                     hx-post="{% url 'lessons:generate_lesson_content' syllabus.pk module.module_index lesson.lesson_index %}"
                     hx-trigger="load"
                     hx-swap="none"
-                    hx-headers="{&quot;X-CSRFToken&quot;: &quot;{{ csrf_token }}&quot;}" >
+                    hx-headers="{"X-CSRFToken": "{{ csrf_token }}"}" >
                 </div>
             {% endif %}
 
@@ -117,6 +117,20 @@
             </script>
             {% endif %}
 
+            <div id="quiz-trigger-area" class="mb-3">
+                <button
+                    type="button"
+                    class="btn btn-primary"
+                    hx-post="{% url 'lessons:start_quiz' lesson.pk %}"
+                    hx-indicator="#loading-overlay"
+                    hx-target="#quiz-trigger-area" {# Keep this to replace the button/initial state #}
+                    hx-swap="outerHTML"
+                    hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                >
+                    Start Quiz
+                </button>
+            </div>
+            
             <div id="chat-section-container" {% if exposition_content is None %}style="display: none;"{% endif %}>
                 <h2>Interactive Chat / Exercises</h2>
                 {# Removed escapejs filter, rely on standard HTML attribute escaping #}
@@ -218,6 +232,23 @@ function renderMath(targetElement = document.body) { // Default to document.body
         console.warn("MathJax not found");
     }
 }
+
+// Handle quiz WebSocket messages
+document.body.addEventListener('htmx:wsAfterMessage', function(evt) {
+    if (evt.detail.message) {
+        try {
+            // Attempt to parse the message as JSON for logging or handling other message types
+            const data = JSON.parse(evt.detail.message);
+            console.log("WebSocket message received:", data);
+
+        } catch (e) {
+            // If parsing fails, it might be raw HTML intended for htmx swap.
+            // Log the raw message if it's not JSON.
+            console.log("WebSocket message received (non-JSON):", evt.detail.message);
+            // Error handling for non-JSON messages if necessary
+        }
+    }
+});
 
 document.body.addEventListener('htmx:afterSwap', function(evt) {
     // Only re-render math in relevant swapped areas

@@ -20,6 +20,7 @@ class AITask(models.Model):
         LESSON_CONTENT = "lesson_content", "Lesson Content Generation"
         LESSON_INTERACTION = "lesson_interaction", "Lesson Interaction"
         ONBOARDING_ASSESSMENT = "onboarding_assessment", "Onboarding Assessment"
+        PROCESS_QUIZ_INTERACTION = "process_quiz_interaction", "Process Quiz Interaction"
 
     class TaskStatus(models.TextChoices):
         """

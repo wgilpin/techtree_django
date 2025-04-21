@@ -6,17 +6,19 @@ WebSocket consumers for lessons app (HTMX/Channels integration).
 
 import json
 import logging
-from typing import cast
+from typing import Any, Dict, Optional, cast
 
 from asgiref.sync import sync_to_async
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.contrib.auth.models import User as AuthUserType  # Use alias for clarity
+from django.shortcuts import get_object_or_404
 from django.template.loader import render_to_string
 
 from core.models import ConversationHistory, Lesson, UserProgress
 from taskqueue.models import AITask
 from taskqueue.tasks import process_ai_task  # Import the background task function
+
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +50,6 @@ class ContentConsumer(AsyncWebsocketConsumer):
         to a text string before calling this method.
         """
         # No client-initiated messages expected for content updates
-        pass
 
     async def content_update(self, event):
         """
@@ -82,12 +83,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     async def receive(self, text_data=None, bytes_data=None):
         """
-        Handle incoming chat messages via WebSocket.
+        Handle incoming messages via WebSocket.
 
-        1. Parses the message (sent as JSON by HTMX form).
-        2. Creates a ConversationHistory entry for the user message.
-        3. Creates an AITask to process the interaction.
-        4. Triggers the background task.
+        Determines if the message is a regular chat message or a quiz answer
+        based on the current lesson state stored in UserProgress.
+
+        1. Parses the message.
+        2. Fetches UserProgress and checks for active quiz state.
+        3. If quiz active:
+            - Saves user message as 'quiz_answer'.
+            - Updates UserProgress state with the answer.
+            - Creates and triggers a PROCESS_QUIZ_INTERACTION AITask.
+        4. If quiz not active:
+            - Saves user message as 'chat'.
+            - Creates and triggers a LESSON_INTERACTION AITask.
         """
         user = self.scope.get("user")
         if not user or not user.is_authenticated:
@@ -100,27 +109,16 @@ class ChatConsumer(AsyncWebsocketConsumer):
             return
 
         try:
-            # Log the full message for debugging
-            logger.debug(f"ChatConsumer received raw message: {text_data}")
-
             data = json.loads(text_data)
-            # Log the parsed data structure
-            logger.debug(f"ChatConsumer parsed data: {data}")
 
-            # Extract user message - try different possible locations
+            # Extract user message content (consistent with previous logic)
             user_message_content = ""
-
-            # Direct access (most likely for HTMX websocket form)
             if "user-message" in data:
                 user_message_content = data.get("user-message", "").strip()
-            # Check in HEADERS (alternative HTMX format)
             elif "HEADERS" in data and isinstance(data["HEADERS"], dict):
                 user_message_content = data["HEADERS"].get("user-message", "").strip()
-            # Try other common locations
             elif "message" in data:
                 user_message_content = data.get("message", "").strip()
-
-            logger.debug(f"Extracted user message: '{user_message_content}'")
 
             if not user_message_content:
                 logger.warning(
@@ -144,26 +142,79 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 await self.close()
                 return
 
-            # Save user message
-            user_message_obj = await database_sync_to_async(ConversationHistory.objects.create)(
-                progress=progress, role="user", message_type="chat", content=user_message_content
+            # --- Check Lesson State for Active Quiz ---
+            # Load the current lesson state directly from UserProgress
+            current_lesson_state = progress.lesson_state_json or {}
+
+            # Determine if quiz is active based on the state structure expected by the graph
+            # An active quiz should have 'current_question_index' and not be 'quiz_complete' or have an error
+            is_quiz_active = (
+                "current_question_index" in current_lesson_state
+                and not current_lesson_state.get("quiz_complete", False)
+                and not current_lesson_state.get("error_message")
+            )
+
+            # --- Save User Message (common step) ---
+            # Determine message type based on quiz state
+            message_type = "quiz_answer" if is_quiz_active else "chat"
+
+            user_message_obj = await database_sync_to_async(
+                ConversationHistory.objects.create
+            )(
+                progress=progress,
+                role="user",
+                message_type=message_type,
+                content=user_message_content,
             )
 
             # Send user message to channel layer immediately
             await self.send_user_message(user_message_obj)
 
-            # Create and trigger background task
-            task = await self.create_ai_task(
-                user, lesson, progress, user_message_content, user_message_obj
-            )
-            await sync_to_async(process_ai_task)(str(task.task_id))  # Wrap sync call for async context
+            # --- Create and Trigger Background Task ---
+            if is_quiz_active:
+                # --- Handle Quiz Answer ---
+                logger.info(
+                    f"ChatConsumer received quiz answer for lesson {self.lesson_id}, user {user.pk}"
+                )
 
-            logger.info(f"Created AITask {task.task_id} for lesson interaction.")
+                # Prepare the state to pass to the AI task
+                # Add the user's answer directly to the top-level state dictionary
+                state_for_ai_task = {
+                    **current_lesson_state, # Start with the current state from UserProgress
+                    "user_answer": user_message_content, # Add the new user answer
+                    # Ensure essential keys are present, defaulting if necessary
+                    "lesson_id": lesson.pk,
+                    "user_id": user.pk,
+                    "difficulty": current_lesson_state.get("difficulty", lesson.module.syllabus.level if lesson.module else "Beginner"), # Get difficulty, default if missing
+                }
+
+                # The create_quiz_ai_task method will save this state to UserProgress
+                # and also save it to AITask input_data
+                task = await self.create_quiz_ai_task(
+                    user, lesson, progress, state_for_ai_task # Pass the flattened state
+                )
+                await sync_to_async(process_ai_task)(str(task.task_id))
+                logger.info(f"Created AITask {task.task_id} for quiz interaction.")
+
+            else:
+                # --- Handle Regular Chat Message ---
+                logger.info(
+                    f"ChatConsumer received chat message for lesson {self.lesson_id}, user {user.pk}"
+                )
+                # For regular chat, create a different AI task
+                task = await self.create_lesson_interaction_ai_task(
+                    user, lesson, progress, user_message_content, user_message_obj
+                )
+                await sync_to_async(process_ai_task)(str(task.task_id))
+                logger.info(f"Created AITask {task.task_id} for lesson interaction.")
 
         except json.JSONDecodeError:
             logger.error(f"ChatConsumer failed to decode JSON: {text_data}")
+            # Optionally send an error message back to the client via WebSocket
+            await self.send_error_message("Invalid message format.")
         except Exception as e:
             logger.error(f"Error in ChatConsumer.receive: {e}", exc_info=True)
+            await self.send_error_message(f"An internal error occurred: {e}")
 
     @database_sync_to_async
     def get_lesson(self, lesson_id):
@@ -190,7 +241,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
             return None
 
     @database_sync_to_async
-    def create_ai_task(self, user, lesson, progress, user_message, user_message_obj):
+    def create_lesson_interaction_ai_task(
+        self, user, lesson, progress, user_message, user_message_obj
+    ):
         """Creates an AITask for the lesson interaction."""
         user_obj = cast(AuthUserType, user)
         return AITask.objects.create(
@@ -206,16 +259,52 @@ class ChatConsumer(AsyncWebsocketConsumer):
             lesson=lesson,
         )
 
+    @database_sync_to_async
+    def create_quiz_ai_task(self, user, lesson, progress, input_state):
+        """
+        Creates an AITask for quiz processing and updates UserProgress state.
+        The input_state is expected to be the flattened state dictionary
+        ready for the quiz graph.
+        """
+        user_obj = cast(AuthUserType, user)
+
+        # Update UserProgress with the state *before* creating the task
+        # This ensures the state is saved as soon as the user provides input
+        # and is available for the processor to load.
+        try:
+            progress.lesson_state_json = input_state # Save the flattened state
+            # Use synchronous save here because the function is wrapped by @database_sync_to_async
+            progress.save(
+                update_fields=["lesson_state_json", "updated_at"]
+            )
+            logger.info(f"UserProgress {progress.pk} updated with state before creating AITask.")
+        except Exception as e:
+            logger.error(f"Error saving UserProgress state in create_quiz_ai_task: {e}", exc_info=True)
+            # Log the error but continue creating the task. The processor will
+            # attempt to load the state from UserProgress, which might be
+            # slightly out of sync if the save failed, but it's the primary source.
+            pass
+
+
+        return AITask.objects.create(
+            task_type=AITask.TaskType.PROCESS_QUIZ_INTERACTION,
+            input_data=input_state,  # Pass the correctly structured input data
+            user=user_obj,
+            lesson=lesson,
+            # Removed: progress=progress, # This was the original TypeError cause
+        )
+
     async def send_user_message(self, user_message_obj):
         """Sends the user's message to the channel layer."""
-        from django.template.loader import render_to_string
 
-        user_message_html = render_to_string("lessons/_chat_message.html", {"message": user_message_obj})
+        user_message_html = render_to_string(
+            "lessons/_chat_message.html", {"message": user_message_obj}
+        )
         oob_chat_message = f"""
             <div id="chat-history" hx-swap-oob="beforeend">
                 {user_message_html}
                 <script>
-                    var chatHistory = document.getElementById("chat-history"); 
+                    var chatHistory = document.getElementById("chat-history");
                     chatHistory.scrollTop = chatHistory.scrollHeight;
                 </script>
             </div>"""
@@ -286,3 +375,164 @@ class ChatConsumer(AsyncWebsocketConsumer):
         """
         message = event["message"]
         await self.send(text_data=message)
+
+    async def send_assistant_message(
+        self,
+        content: str,
+        message_type: str = "chat",
+        extra_context: Optional[Dict[str, Any]] = None,
+    ):
+        """Helper to format and send an assistant message to the chat history."""
+        # In a real app, you might want to save this to ConversationHistory
+        # For simplicity here, we create a temporary object for rendering
+        progress = await self.get_user_progress(
+            self.scope["user"], await self.get_lesson(self.lesson_id)
+        )
+        if not progress:
+            logger.error(
+                f"Cannot send assistant message: UserProgress not found for lesson {self.lesson_id}"
+            )
+            return  # Or handle error appropriately
+
+        message_obj = ConversationHistory(
+            progress=progress,  # Required for template context if it uses it
+            role="assistant",
+            content=content,
+            message_type=message_type,
+        )
+        # await database_sync_to_async(message_obj.save)() # Optional: Save to DB
+
+        # Combine base context with extra_context
+        template_context = {"message": message_obj}
+        if extra_context:
+            template_context.update(extra_context)
+
+        message_html = render_to_string(
+            "lessons/_chat_message.html", template_context  # Use the combined context
+        )
+        scroll_script = (
+            '<script>var chatHistory = document.getElementById("chat-history"); '
+            "chatHistory.scrollTop = chatHistory.scrollHeight;</script>"
+        )
+        oob_chat_message = f'<div id="chat-history" hx-swap-oob="beforeend">{message_html}{scroll_script}</div>'
+
+        await self.channel_layer.group_send(
+            self.group_name,
+            {
+                "type": "chat.message",  # Use the existing chat message handler
+                "message": oob_chat_message,
+            },
+        )
+
+    async def quiz_question(self, event):
+        """Handles quiz_question events from the quiz processor task."""
+        payload = event.get("payload")
+        if payload:
+            question_text = payload.get(
+                "question_text", "Error: Missing question text."
+            )
+            options = payload.get("options", [])  # Extract options
+            question_index = payload.get("question_index", "?")
+            total_questions = payload.get("total_questions", "?")
+
+            # Pass the extracted data to send_assistant_message
+            await self.send_assistant_message(
+                question_text,
+                message_type="quiz_question",
+                extra_context={  # Pass extra context for the template
+                    "question_index": question_index,
+                    "total_questions": total_questions,
+                    "options": options,  # Include options in the context
+                },
+            )
+            logger.debug(f"Sent quiz_question to chat group {self.group_name}")
+        else:
+            logger.warning(
+                f"Received quiz_question event with empty payload for group {self.group_name}"
+            )
+            await self.send_error_message("Received an empty quiz question.")
+
+    async def quiz_feedback(self, event):
+        """Handles quiz_feedback events from the quiz processor task."""
+        payload = event.get("payload")
+        if payload:
+            feedback_text = payload.get("feedback", "Error: Missing feedback text.")
+            is_correct = payload.get("is_correct", False)
+            question_index = payload.get("question_index", "?") # Get index for feedback
+            total_questions = payload.get("total_questions", "?") # Get total for feedback
+
+            # Format the feedback as a chat message
+            prefix = "✅ Correct!" if is_correct else "❌ Incorrect."
+            formatted_content = f"{prefix}\n\n{feedback_text}"
+            await self.send_assistant_message(
+                formatted_content,
+                message_type="quiz_feedback",
+                extra_context={ # Pass extra context for the template
+                    "question_index": question_index,
+                    "total_questions": total_questions,
+                    "is_correct": is_correct, # Include correctness for potential styling
+                }
+            )
+            logger.debug(f"Sent quiz_feedback to chat group {self.group_name}")
+        else:
+            logger.warning(
+                f"Received quiz_feedback event with empty payload for group {self.group_name}"
+            )
+            await self.send_error_message("Received empty quiz feedback.")
+
+    async def quiz_result(self, event):
+        """Handles quiz_result events from the quiz processor task."""
+        payload = event.get("payload")
+        if payload:
+            score = payload.get("score", 0)
+            total_questions = payload.get("total_questions", 0)
+            summary = payload.get("summary", "Quiz finished!")
+            # Format the result as a chat message
+            formatted_content = f"**Quiz Complete!**\n\nYour score: {score}/{total_questions}\n\n{summary}"
+            await self.send_assistant_message(
+                formatted_content, message_type="quiz_result"
+            )
+            logger.debug(f"Sent quiz_result to chat group {self.group_name}")
+
+            # Optionally, update the main lesson state to mark quiz as finished
+            # This is now handled by the quiz_processor saving the final state
+            # with quiz_complete=True. The consumer just needs to react to the message.
+
+        else:
+            logger.warning(
+                f"Received quiz_result event with empty payload for group {self.group_name}"
+            )
+            await self.send_error_message("Received empty quiz results.")
+
+    async def quiz_error(self, event):
+        """Handles quiz_error events from the quiz processor task."""
+        payload = event.get("payload")
+        error_message = "An unknown error occurred during the quiz."
+        if payload:
+            error_message = payload.get("error", error_message)
+
+        logger.error(
+            f"Received quiz_error for group {self.group_name}: {error_message}"
+        )
+        # Format the error as a chat message
+        formatted_content = f"⚠️ **Quiz Error:**\n\n{error_message}"
+        await self.send_assistant_message(formatted_content, message_type="quiz_error")
+
+        # Optionally, update the main lesson state to mark quiz as errored
+        # This is now handled by the quiz_processor saving the final state
+        # with error_message set. The consumer just needs to react to the message.
+
+
+    async def send_error_message(self, error_text: str):
+        """Helper to send a simple error message to the client."""
+        # This could be enhanced to use the OOB swap like send_assistant_message
+        # For simplicity, sending a basic text message for now.
+        # Consider creating a specific error format/template if needed.
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "error",  # Define a client-side handler for this if needed
+                    "message": error_text,
+                }
+            )
+        )

@@ -153,8 +153,8 @@ class Module(models.Model):
 
     # Django adds 'id' as primary key automatically (type int)
     id: int
-    syllabus: models.ForeignKey[Syllabus] = models.ForeignKey(
-        Syllabus,
+    syllabus: models.ForeignKey["Syllabus"] = models.ForeignKey(
+        "Syllabus",
         on_delete=models.CASCADE,
         related_name="modules",
         help_text="The syllabus this module belongs to.",
@@ -168,6 +168,9 @@ class Module(models.Model):
     summary: models.TextField = models.TextField(
         null=True, blank=True, help_text="A brief summary of the module content."
     )
+    duration: models.IntegerField = models.IntegerField(
+        null=True, blank=True, help_text="Estimated duration of the lesson in minutes."
+    )
     created_at: models.DateTimeField = models.DateTimeField(
         auto_now_add=True, help_text="Timestamp when the module was created."
     )
@@ -179,7 +182,7 @@ class Module(models.Model):
         """Return a string representation of the module."""
         # Correctly access related syllabus ID
         return f"Module {self.module_index}: {self.title} (Syllabus: {self.syllabus.pk})"  # type: ignore[attr-defined] # pylint: disable=no-member
-
+    
     class Meta:
         """Meta options for Module."""
 
@@ -333,6 +336,10 @@ class UserProgress(models.Model):
         default="not_started",
         help_text="The current completion status of the lesson for the user.",
     )
+    lesson_completed: models.BooleanField = models.BooleanField(
+        default=False, 
+        help_text="Indicates if the lesson has been completed."
+    )
     score: models.FloatField = models.FloatField(
         null=True,
         blank=True,
@@ -341,6 +348,7 @@ class UserProgress(models.Model):
     lesson_state_json: models.JSONField = models.JSONField(
         null=True,
         blank=True,
+        default=dict,
         help_text="JSON blob storing conversational state or other lesson-specific data.",
     )
     created_at: models.DateTimeField = models.DateTimeField(

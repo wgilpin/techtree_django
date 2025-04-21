@@ -17,6 +17,7 @@ from taskqueue.processors.interaction_processor import process_lesson_interactio
 from taskqueue.processors.lesson_processor import process_lesson_content
 from taskqueue.processors.onboarding_processor import process_onboarding_assessment
 from taskqueue.processors.syllabus_utils import process_syllabus_generation
+from taskqueue.processors.quiz_processor import process_quiz_task
 
 from .models import AITask
 
@@ -104,27 +105,33 @@ def process_ai_task(task_id):
         )
 
         # Route to appropriate processor based on task type
-        if task.task_type == AITask.TaskType.SYLLABUS_GENERATION:
-            result = process_syllabus_generation(task)
-        elif task.task_type == AITask.TaskType.LESSON_CONTENT:
-            result = process_lesson_content(task)
-        elif task.task_type == AITask.TaskType.LESSON_INTERACTION:
-            result = process_lesson_interaction(task)
-        elif task.task_type == AITask.TaskType.ONBOARDING_ASSESSMENT:
-            result = process_onboarding_assessment(task)
+        processor_map = {
+            AITask.TaskType.SYLLABUS_GENERATION: process_syllabus_generation,
+            AITask.TaskType.LESSON_CONTENT: process_lesson_content,
+            AITask.TaskType.LESSON_INTERACTION: process_lesson_interaction,
+            AITask.TaskType.ONBOARDING_ASSESSMENT: process_onboarding_assessment,
+        }
+
+        if task.task_type == AITask.TaskType.PROCESS_QUIZ_INTERACTION:
+            process_quiz_task(task_id)  # Quiz processor handles its own status and saving
+            # No result assignment or saving here
+        elif task.task_type in processor_map:
+            processor = processor_map[task.task_type]
+            result = processor(task)
+            # Update task with result and mark as completed
+            task.result_data = result
+            task.status = AITask.TaskStatus.COMPLETED
+            task.save(update_fields=["result_data", "status", "updated_at"])
+            logger.info(f"Task {task_id} completed successfully")
+        elif task.task_type == AITask.TaskType.PROCESS_QUIZ_INTERACTION:
+            process_quiz_task(task_id) # Quiz processor handles its own status and saving
+            # No result assignment or saving here
         else:
             logger.error(
                 f"Unknown task type encountered: {task.task_type!r}. "
                 f"Available types: {[t for t in AITask.TaskType.values]}"
             )
             raise ValueError(f"Unknown task type: {task.task_type}")
-
-        # Update task with result
-        task.result_data = result
-        task.status = AITask.TaskStatus.COMPLETED
-        task.save(update_fields=["result_data", "status", "updated_at"])
-
-        logger.info(f"Task {task_id} completed successfully")
 
     except Exception as e:
         logger.error(f"Error processing task {task_id}: {str(e)}", exc_info=True)

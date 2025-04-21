@@ -6,7 +6,7 @@ and assessment answers using the LessonInteractionGraph.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, Optional, cast
 
 # pylint: disable=no-member
 from django.utils import timezone as django_timezone

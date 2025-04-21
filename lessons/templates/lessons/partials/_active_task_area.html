@@ -1,0 +1,31 @@
+{# Displays the currently active exercise or assessment prompt #}
+{% load markdown_extras %}
+
+{% if active_exercise %}
+    <div class="card mb-3">
+        <div class="card-header">
+            Exercise
+        </div>
+        <div class="card-body">
+            <p class="card-text">{{ active_exercise.prompt|markdownify }}</p>
+            {# Add form for submitting exercise answer if needed #}
+        </div>
+    </div>
+{% elif active_assessment %}
+    <div class="card mb-3">
+        <div class="card-header">
+            Assessment Question
+        </div>
+        <div class="card-body">
+            <p class="card-text">{{ active_assessment.question|markdownify }}</p>
+            {# Add form for submitting assessment answer if needed #}
+        </div>
+    </div>
+{% elif task_prompt %}
+     <div class="alert alert-info" role="alert">
+        {{ task_prompt|markdownify }}
+     </div>
+{% else %}
+    {# No active task, maybe show a placeholder or nothing #}
+    <p class="text-muted">No active exercise or assessment.</p>
+{% endif %}

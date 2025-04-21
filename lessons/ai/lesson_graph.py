@@ -1,7 +1,7 @@
 """Defines and manages the LangGraph workflow for lesson interactions."""
 
 import logging
-from typing import Any, Dict, List, cast, Optional
+from typing import Any, Dict, List, cast
 
 from langgraph.graph import StateGraph, END
 

@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     "onboarding.apps.OnboardingConfig",
     "syllabus.apps.SyllabusConfig",
     "lessons.apps.LessonsConfig",
+    "quiz.apps.QuizConfig",
     "background_task",
     "taskqueue",
 
@@ -193,6 +194,31 @@ LOGGING = {
         },
     },
     'loggers': {
+        'daphne': {
+            'handlers': ['file'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'daphne.server': {
+            'handlers': ['file'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'daphne.http_protocol': {
+            'handlers': ['file'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'daphne.ws_protocol': {
+            'handlers': ['file'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'django.channels.server': {
+            'handlers': ['file'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
         '': { # Root logger
             'handlers': ['console', 'file'],
             'level': 'DEBUG', # Reverted back to DEBUG
@@ -233,6 +259,21 @@ LOGGING = {
             'level': 'WARNING',
             'propagate': False,
         },
+    },
+    'langsmith.client': {
+        'handlers': ['console', 'file'],
+        'level': 'WARNING',
+        'propagate': False,
+    },
+    'background_task.tasks': {
+        'handlers': ['console', 'file'],
+        'level': 'WARNING',
+        'propagate': False,
+    },
+    'taskqueue': {
+        'handlers': ['console', 'file'],
+        'level': 'WARNING',
+        'propagate': False,
     },
 }
 

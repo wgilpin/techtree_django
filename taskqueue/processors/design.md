@@ -32,3 +32,9 @@ Synchronous processor for handling onboarding assessment tasks (answer evaluatio
 Synchronous processor for handling syllabus generation tasks from the background queue. (Note: Previously might have been syllabus_processor.py)
 
 - `process_syllabus_generation(task)`: Processes a syllabus generation task, invoking the syllabus AI graph and saving the result.
+
+### quiz_processor.py
+
+Synchronous processor for handling end-of-lesson quiz tasks from the background queue.
+
+- `process_quiz_task(task_id)`: Processes a quiz interaction task, invoking the quiz AI graph, managing state, and updating user progress on completion.
